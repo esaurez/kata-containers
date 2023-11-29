@@ -16,14 +16,15 @@ build_rootfs() {
 	cat > "$multistrap_conf" << EOF
 [General]
 cleanup=true
-aptsources=Ubuntu
+aptsources=Ubuntu Universe
 bootstrap=Ubuntu
 
 [Ubuntu]
 source=$REPO_URL
 keyring=ubuntu-keyring
-suite=focal
+suite=$OS_VERSION
 packages=$PACKAGES $EXTRA_PKGS
+components=main universe
 EOF
 	if ! multistrap -a "$DEB_ARCH" -d "$rootfs_dir" -f "$multistrap_conf"; then
 		build_dbus $rootfs_dir

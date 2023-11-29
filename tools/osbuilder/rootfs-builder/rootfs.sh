@@ -630,6 +630,33 @@ EOF
 		OK "cp ${AGENT_SOURCE_BIN} ${AGENT_DEST}"
 	fi
 
+	info "Configuring demikernel"
+	export LIBOS_MODE=catloop
+	export DEMIKERNEL_HOME=${ROOTFS_DIR}/home/demikernel
+	export INSTALL_PREFIX=${DEMIKERNEL_HOME}
+	export RUST_LOG="trace"
+	mkdir -p ${DEMIKERNEL_HOME}
+	pushd ${DEMIKERNEL_HOME}
+	info "Compiling demikernel"
+	git clone https://github.com/esaurez/demikernel.git
+	pushd demikernel
+	git checkout feature-pal-virtio_shared_memory	
+	# TODO eliminate trace and debug, and use strip on the binaries of demikernel
+	RUST_LOG="trace" DEBUG=yes LIBOS=$LIBOS_MODE VM_SHM=yes make all
+	DEBUG=yes LIBOS=$LIBOS_MODE INSTALL_PREFIX=$DEMIKERNEL_HOME VM_SHM=yes make install
+	mv bin ${DEMIKERNEL_HOME}
+	popd
+	rm -rf demikernel
+	info "Compiling demikernel shim layer"
+	git clone https://github.com/demikernel/posix-shim.git
+	pushd posix-shim
+	git checkout dev
+	make all
+	make install
+	popd
+	rm -rf posix-shim
+	popd
+
 	[ -x "${AGENT_DEST}" ] || die "${AGENT_DEST} is not installed in ${ROOTFS_DIR}"
 	OK "Agent installed"
 

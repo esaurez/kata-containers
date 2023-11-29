@@ -5,11 +5,11 @@
 OS_NAME=ubuntu
 # This should be Ubuntu's code name, e.g. "focal" (Focal Fossa) for 20.04
 OS_VERSION=${OS_VERSION:-focal}
-PACKAGES="chrony iptables dbus"
+PACKAGES="chrony iptables dbus openssh-client git g++ gcc tar curl zip unzip pkg-config build-essential vim ca-certificates ninja-build kmod"
 [ "$AGENT_INIT" = no ] && PACKAGES+=" init"
 [ "$MEASURED_ROOTFS" = yes ] && PACKAGES+=" cryptsetup-bin e2fsprogs"
 [ "$SECCOMP" = yes ] && PACKAGES+=" libseccomp2"
-REPO_URL=http://ports.ubuntu.com
+REPO_URL=http://archive.ubuntu.com/ubuntu
 
 case "$ARCH" in
 	aarch64) DEB_ARCH=arm64;;
