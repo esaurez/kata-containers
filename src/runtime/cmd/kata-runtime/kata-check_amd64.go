@@ -115,6 +115,8 @@ func setCPUtype(hypervisorType vc.HypervisorType) error {
 		}
 
 		switch hypervisorType {
+		case vc.StratovirtHypervisor:
+			fallthrough
 		case vc.FirecrackerHypervisor:
 			fallthrough
 		case vc.ClhHypervisor:
@@ -315,10 +317,14 @@ func archHostCanCreateVMContainer(hypervisorType vc.HypervisorType) error {
 		fallthrough
 	case vc.ClhHypervisor:
 		fallthrough
+	case vc.StratovirtHypervisor:
+		fallthrough
 	case vc.FirecrackerHypervisor:
 		return kvmIsUsable()
 	case vc.AcrnHypervisor:
 		return acrnIsUsable()
+	case vc.RemoteHypervisor:
+		return nil
 	case vc.MockHypervisor:
 		return nil
 	default:

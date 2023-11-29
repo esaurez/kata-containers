@@ -52,6 +52,8 @@ const (
 	qemuHypervisorTableType        = "qemu"
 	acrnHypervisorTableType        = "acrn"
 	dragonballHypervisorTableType  = "dragonball"
+	stratovirtHypervisorTableType  = "stratovirt"
+	remoteHypervisorTableType      = "remote"
 
 	// the maximum amount of PCI bridges that can be cold plugged in a VM
 	maxPCIBridges uint32 = 5
@@ -104,6 +106,7 @@ type hypervisor struct {
 	GuestMemoryDumpPath            string                    `toml:"guest_memory_dump_path"`
 	SeccompSandbox                 string                    `toml:"seccompsandbox"`
 	BlockDeviceAIO                 string                    `toml:"block_device_aio"`
+	RemoteHypervisorSocket         string                    `toml:"remote_hypervisor_socket"`
 	HypervisorPathList             []string                  `toml:"valid_hypervisor_paths"`
 	JailerPathList                 []string                  `toml:"valid_jailer_paths"`
 	CtlPathList                    []string                  `toml:"valid_ctlpaths"`
@@ -133,7 +136,8 @@ type hypervisor struct {
 	MemSlots                       uint32                    `toml:"memory_slots"`
 	DefaultBridges                 uint32                    `toml:"default_bridges"`
 	Msize9p                        uint32                    `toml:"msize_9p"`
-	NumVCPUs                       int32                     `toml:"default_vcpus"`
+	RemoteHypervisorTimeout        uint32                    `toml:"remote_hypervisor_timeout"`
+	NumVCPUs                       float32                   `toml:"default_vcpus"`
 	BlockDeviceCacheSet            bool                      `toml:"block_device_cache_set"`
 	BlockDeviceCacheDirect         bool                      `toml:"block_device_cache_direct"`
 	BlockDeviceCacheNoflush        bool                      `toml:"block_device_cache_noflush"`
@@ -395,17 +399,17 @@ func getCurrentCpuNum() uint32 {
 	return cpu
 }
 
-func (h hypervisor) defaultVCPUs() uint32 {
-	numCPUs := getCurrentCpuNum()
+func (h hypervisor) defaultVCPUs() float32 {
+	numCPUs := float32(getCurrentCpuNum())
 
-	if h.NumVCPUs < 0 || h.NumVCPUs > int32(numCPUs) {
+	if h.NumVCPUs < 0 || h.NumVCPUs > numCPUs {
 		return numCPUs
 	}
 	if h.NumVCPUs == 0 { // or unspecified
-		return defaultVCPUCount
+		return float32(defaultVCPUCount)
 	}
 
-	return uint32(h.NumVCPUs)
+	return h.NumVCPUs
 }
 
 func (h hypervisor) defaultMaxVCPUs() uint32 {
@@ -646,6 +650,20 @@ func (h hypervisor) getIOMMUPlatform() bool {
 	return h.IOMMUPlatform
 }
 
+func (h hypervisor) getRemoteHypervisorSocket() string {
+	if h.RemoteHypervisorSocket == "" {
+		return defaultRemoteHypervisorSocket
+	}
+	return h.RemoteHypervisorSocket
+}
+
+func (h hypervisor) getRemoteHypervisorTimeout() uint32 {
+	if h.RemoteHypervisorTimeout == 0 {
+		return defaultRemoteHypervisorTimeout
+	}
+	return h.RemoteHypervisorTimeout
+}
+
 func (a agent) debugConsoleEnabled() bool {
 	return a.DebugConsoleEnabled
 }
@@ -723,7 +741,7 @@ func newFirecrackerHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		RootfsType:            rootfsType,
 		FirmwarePath:          firmware,
 		KernelParams:          vc.DeserializeParams(vc.KernelParamFields(kernelParams)),
-		NumVCPUs:              h.defaultVCPUs(),
+		NumVCPUsF:             h.defaultVCPUs(),
 		DefaultMaxVCPUs:       h.defaultMaxVCPUs(),
 		MemorySize:            h.defaultMemSz(),
 		MemSlots:              h.defaultMemSlots(),
@@ -857,7 +875,7 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		CPUFeatures:             cpuFeatures,
 		KernelParams:            vc.DeserializeParams(vc.KernelParamFields(kernelParams)),
 		HypervisorMachineType:   machineType,
-		NumVCPUs:                h.defaultVCPUs(),
+		NumVCPUsF:               h.defaultVCPUs(),
 		DefaultMaxVCPUs:         h.defaultMaxVCPUs(),
 		MemorySize:              h.defaultMemSz(),
 		MemSlots:                h.defaultMemSlots(),
@@ -968,7 +986,7 @@ func newAcrnHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		HypervisorCtlPathList: h.CtlPathList,
 		FirmwarePath:          firmware,
 		KernelParams:          vc.DeserializeParams(vc.KernelParamFields(kernelParams)),
-		NumVCPUs:              h.defaultVCPUs(),
+		NumVCPUsF:             h.defaultVCPUs(),
 		DefaultMaxVCPUs:       h.defaultMaxVCPUs(),
 		MemorySize:            h.defaultMemSz(),
 		MemSlots:              h.defaultMemSlots(),
@@ -1059,7 +1077,7 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		MachineAccelerators:            machineAccelerators,
 		KernelParams:                   vc.DeserializeParams(vc.KernelParamFields(kernelParams)),
 		HypervisorMachineType:          machineType,
-		NumVCPUs:                       h.defaultVCPUs(),
+		NumVCPUsF:                      h.defaultVCPUs(),
 		DefaultMaxVCPUs:                h.defaultMaxVCPUs(),
 		MemorySize:                     h.defaultMemSz(),
 		MemSlots:                       h.defaultMemSlots(),
@@ -1132,12 +1150,126 @@ func newDragonballHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		ImagePath:       image,
 		RootfsType:      rootfsType,
 		KernelParams:    vc.DeserializeParams(vc.KernelParamFields(kernelParams)),
-		NumVCPUs:        h.defaultVCPUs(),
+		NumVCPUsF:       h.defaultVCPUs(),
 		DefaultMaxVCPUs: h.defaultMaxVCPUs(),
 		MemorySize:      h.defaultMemSz(),
 		MemSlots:        h.defaultMemSlots(),
 		EntropySource:   h.GetEntropySource(),
 		Debug:           h.Debug,
+	}, nil
+}
+
+func newStratovirtHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
+	hypervisor, err := h.path()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	kernel, err := h.kernel()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	initrd, err := h.initrd()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	image, err := h.image()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	if image != "" && initrd != "" {
+		return vc.HypervisorConfig{},
+			errors.New("having both an image and an initrd defined in the configuration file is not supported")
+	}
+
+	if image == "" && initrd == "" {
+		return vc.HypervisorConfig{},
+			errors.New("image or initrd must be defined in the configuration file")
+	}
+
+	rootfsType, err := h.rootfsType()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	kernelParams := h.kernelParams()
+	machineType := h.machineType()
+
+	blockDriver, err := h.blockDeviceDriver()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	if vSock, err := utils.SupportsVsocks(); !vSock {
+		return vc.HypervisorConfig{}, err
+	}
+
+	sharedFS, err := h.sharedFS()
+	if err != nil {
+		return vc.HypervisorConfig{}, err
+	}
+
+	if sharedFS != config.VirtioFS && sharedFS != config.VirtioFSNydus && sharedFS != config.NoSharedFS {
+		return vc.HypervisorConfig{},
+			fmt.Errorf("Stratovirt Hypervisor does not support %s shared filesystem option", sharedFS)
+	}
+
+	if (sharedFS == config.VirtioFS || sharedFS == config.VirtioFSNydus) && h.VirtioFSDaemon == "" {
+		return vc.HypervisorConfig{},
+			fmt.Errorf("cannot enable %s without daemon path in configuration file", sharedFS)
+	}
+
+	return vc.HypervisorConfig{
+		HypervisorPath:        hypervisor,
+		HypervisorPathList:    h.HypervisorPathList,
+		KernelPath:            kernel,
+		InitrdPath:            initrd,
+		ImagePath:             image,
+		RootfsType:            rootfsType,
+		KernelParams:          vc.DeserializeParams(strings.Fields(kernelParams)),
+		HypervisorMachineType: machineType,
+		NumVCPUsF:             h.defaultVCPUs(),
+		DefaultMaxVCPUs:       h.defaultMaxVCPUs(),
+		MemorySize:            h.defaultMemSz(),
+		MemSlots:              h.defaultMemSlots(),
+		MemOffset:             h.defaultMemOffset(),
+		DefaultMaxMemorySize:  h.defaultMaxMemSz(),
+		EntropySource:         h.GetEntropySource(),
+		DefaultBridges:        h.defaultBridges(),
+		DisableBlockDeviceUse: h.DisableBlockDeviceUse,
+		SharedFS:              sharedFS,
+		VirtioFSDaemon:        h.VirtioFSDaemon,
+		VirtioFSDaemonList:    h.VirtioFSDaemonList,
+		VirtioFSCacheSize:     h.VirtioFSCacheSize,
+		VirtioFSCache:         h.defaultVirtioFSCache(),
+		VirtioFSExtraArgs:     h.VirtioFSExtraArgs,
+		HugePages:             h.HugePages,
+		Debug:                 h.Debug,
+		DisableNestingChecks:  h.DisableNestingChecks,
+		BlockDeviceDriver:     blockDriver,
+		DisableVhostNet:       true,
+		GuestHookPath:         h.guestHookPath(),
+		EnableAnnotations:     h.EnableAnnotations,
+		DisableSeccomp:        h.DisableSeccomp,
+		DisableSeLinux:        h.DisableSeLinux,
+		DisableGuestSeLinux:   h.DisableGuestSeLinux,
+	}, nil
+}
+
+func newRemoteHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
+
+	return vc.HypervisorConfig{
+		RemoteHypervisorSocket:  h.getRemoteHypervisorSocket(),
+		RemoteHypervisorTimeout: h.getRemoteHypervisorTimeout(),
+		DisableGuestSeLinux:     true, // The remote hypervisor has a different guest, so Guest SELinux config doesn't work
+
+		// No valid value so avoid to append block device to list in kata_agent.appendDevices
+		BlockDeviceDriver: "dummy",
+		EnableAnnotations: h.EnableAnnotations,
+		GuestHookPath:     h.guestHookPath(),
 	}, nil
 }
 
@@ -1177,6 +1309,12 @@ func updateRuntimeConfigHypervisor(configPath string, tomlConf tomlConfig, confi
 		case dragonballHypervisorTableType:
 			config.HypervisorType = vc.DragonballHypervisor
 			hConfig, err = newDragonballHypervisorConfig(hypervisor)
+		case stratovirtHypervisorTableType:
+			config.HypervisorType = vc.StratovirtHypervisor
+			hConfig, err = newStratovirtHypervisorConfig(hypervisor)
+		case remoteHypervisorTableType:
+			config.HypervisorType = vc.RemoteHypervisor
+			hConfig, err = newRemoteHypervisorConfig(hypervisor)
 		default:
 			err = fmt.Errorf("%s: %+q", errInvalidHypervisorPrefix, k)
 		}
@@ -1297,7 +1435,7 @@ func GetDefaultHypervisorConfig() vc.HypervisorConfig {
 		MachineAccelerators:      defaultMachineAccelerators,
 		CPUFeatures:              defaultCPUFeatures,
 		HypervisorMachineType:    defaultMachineType,
-		NumVCPUs:                 defaultVCPUCount,
+		NumVCPUsF:                float32(defaultVCPUCount),
 		DefaultMaxVCPUs:          defaultMaxVCPUCount,
 		MemorySize:               defaultMemSize,
 		MemOffset:                defaultMemOffset,
@@ -1778,6 +1916,11 @@ func checkFactoryConfig(config oci.RuntimeConfig) error {
 // checkHypervisorConfig performs basic "sanity checks" on the hypervisor
 // config.
 func checkHypervisorConfig(config vc.HypervisorConfig) error {
+
+	if config.RemoteHypervisorSocket != "" {
+		return nil
+	}
+
 	type image struct {
 		path   string
 		initrd bool

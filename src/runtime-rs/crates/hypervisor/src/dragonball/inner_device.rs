@@ -7,19 +7,15 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
-use dbs_utils::net::MacAddr;
-use dragonball::{
-    api::v1::{
-        BlockDeviceConfigInfo, FsDeviceConfigInfo, FsMountConfigInfo, VirtioNetDeviceConfigInfo,
-        VsockDeviceConfigInfo,
-    },
-    device_manager::blk_dev_mgr::BlockDeviceType,
+use dragonball::api::v1::{
+    BlockDeviceConfigInfo, FsDeviceConfigInfo, FsMountConfigInfo, VsockDeviceConfigInfo,
 };
+use dragonball::device_manager::blk_dev_mgr::BlockDeviceType;
 
 use super::DragonballInner;
 use crate::{
-    device::DeviceType, HybridVsockConfig, NetworkConfig, ShareFsDeviceConfig, ShareFsMountConfig,
-    ShareFsMountType, ShareFsOperation, VfioBusMode, VfioDevice, VmmState, JAILER_ROOT,
+    device::DeviceType, HybridVsockConfig, NetworkConfig, ShareFsConfig, ShareFsMountConfig,
+    ShareFsMountOperation, ShareFsMountType, VfioBusMode, VfioDevice, VmmState, JAILER_ROOT,
 };
 
 const MB_TO_B: u32 = 1024 * 1024;
@@ -71,9 +67,6 @@ impl DragonballInner {
             DeviceType::ShareFs(sharefs) => self
                 .add_share_fs_device(&sharefs.config)
                 .context("add share fs device"),
-            DeviceType::ShareFsMount(sharefs_mount) => self
-                .add_share_fs_mount(&sharefs_mount.config)
-                .context("add share fs mount"),
         }
     }
 
@@ -85,7 +78,7 @@ impl DragonballInner {
                 // Dragonball doesn't support remove network device, just print message.
                 info!(
                     sl!(),
-                    "dragonball remove network device: {:?}.", network.config.virt_iface_name
+                    "dragonball remove network device: {:?}.", network.config
                 );
 
                 Ok(())
@@ -102,6 +95,18 @@ impl DragonballInner {
                 self.remove_vfio_device(hostdev_id)
             }
             _ => Err(anyhow!("unsupported device {:?}", device)),
+        }
+    }
+
+    pub(crate) async fn update_device(&mut self, device: DeviceType) -> Result<()> {
+        info!(sl!(), "dragonball update device {:?}", &device);
+        match device {
+            DeviceType::ShareFs(sharefs_mount) => {
+                // It's safe to unwrap mount config as mount_config is always there.
+                self.add_share_fs_mount(&sharefs_mount.config.mount_config.unwrap())
+                    .context("update share-fs device with mount operation.")
+            }
+            _ => Err(anyhow!("unsupported device {:?} to update.", device)),
         }
     }
 
@@ -204,25 +209,8 @@ impl DragonballInner {
     }
 
     fn add_net_device(&mut self, config: &NetworkConfig) -> Result<()> {
-        let iface_cfg = VirtioNetDeviceConfigInfo {
-            iface_id: config.virt_iface_name.clone(),
-            host_dev_name: config.host_dev_name.clone(),
-            guest_mac: match &config.guest_mac {
-                Some(mac) => MacAddr::from_bytes(&mac.0).ok(),
-                None => None,
-            },
-            num_queues: config.queue_num,
-            queue_size: config.queue_size as u16,
-            ..Default::default()
-        };
-
-        info!(
-            sl!(),
-            "add {} endpoint to {}", iface_cfg.host_dev_name, iface_cfg.iface_id
-        );
-
         self.vmm_instance
-            .insert_network_device(iface_cfg)
+            .insert_network_device(config.into())
             .context("insert network device")
     }
 
@@ -306,7 +294,7 @@ impl DragonballInner {
         Ok(())
     }
 
-    fn add_share_fs_device(&self, config: &ShareFsDeviceConfig) -> Result<()> {
+    fn add_share_fs_device(&self, config: &ShareFsConfig) -> Result<()> {
         let mut fs_cfg = FsDeviceConfigInfo {
             sock_path: config.sock_path.clone(),
             tag: config.mount_tag.clone(),
@@ -358,9 +346,9 @@ impl DragonballInner {
 
     fn add_share_fs_mount(&mut self, config: &ShareFsMountConfig) -> Result<()> {
         let ops = match config.op {
-            ShareFsOperation::Mount => "mount",
-            ShareFsOperation::Umount => "umount",
-            ShareFsOperation::Update => "update",
+            ShareFsMountOperation::Mount => "mount",
+            ShareFsMountOperation::Umount => "umount",
+            ShareFsMountOperation::Update => "update",
         };
 
         let fstype = match config.fstype {

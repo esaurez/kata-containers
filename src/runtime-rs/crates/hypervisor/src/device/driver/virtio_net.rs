@@ -9,10 +9,8 @@ use std::fmt;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use crate::{
-    device::{Device, DeviceType},
-    Hypervisor as hypervisor,
-};
+use crate::device::{Device, DeviceType};
+use crate::Hypervisor as hypervisor;
 
 #[derive(Clone)]
 pub struct Address(pub [u8; 6]);
@@ -29,24 +27,35 @@ impl fmt::Debug for Address {
 }
 
 #[derive(Clone, Debug, Default)]
+pub enum Backend {
+    #[default]
+    Virtio,
+    Vhost,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct NetworkConfig {
     /// for detach, now it's default value 0.
     pub index: u64,
 
+    /// Network device backend
+    pub backend: Backend,
     /// Host level path for the guest network interface.
     pub host_dev_name: String,
-
     /// Guest iface name for the guest network interface.
     pub virt_iface_name: String,
-
     /// Guest MAC address.
     pub guest_mac: Option<Address>,
-
     /// Virtio queue size
     pub queue_size: usize,
-
     /// Virtio queue num
     pub queue_num: usize,
+    /// Use shared irq
+    pub use_shared_irq: Option<bool>,
+    /// Use generic irq
+    pub use_generic_irq: Option<bool>,
+    /// Allow duplicate mac
+    pub allow_duplicate_mac: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -84,6 +93,11 @@ impl Device for NetworkDevice {
             .context("remove network device.")?;
 
         Ok(Some(self.config.index))
+    }
+
+    async fn update(&mut self, _h: &dyn hypervisor) -> Result<()> {
+        // There's no need to do update for network device
+        Ok(())
     }
 
     async fn get_device_info(&self) -> DeviceType {

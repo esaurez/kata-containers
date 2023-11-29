@@ -28,6 +28,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 
+	cri "github.com/containerd/containerd/pkg/cri/annotations"
+	crio "github.com/containers/podman/v4/pkg/annotations"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/device/api"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/device/config"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/device/drivers"
@@ -116,9 +118,9 @@ type SandboxStats struct {
 
 type SandboxResourceSizing struct {
 	// The number of CPUs required for the sandbox workload(s)
-	WorkloadCPUs uint32
+	WorkloadCPUs float32
 	// The base number of CPUs for the VM that are assigned as overhead
-	BaseCPUs uint32
+	BaseCPUs float32
 	// The amount of memory required for the sandbox workload(s)
 	WorkloadMemMB uint32
 	// The base amount of memory required for that VM that is assigned as overhead
@@ -635,6 +637,8 @@ func newSandbox(ctx context.Context, sandboxConfig SandboxConfig, factory Factor
 
 	}
 
+	setHypervisorConfigAnnotations(&sandboxConfig)
+
 	coldPlugVFIO, err := s.coldOrHotPlugVFIO(&sandboxConfig)
 	if err != nil {
 		return nil, err
@@ -720,6 +724,23 @@ func (s *Sandbox) coldOrHotPlugVFIO(sandboxConfig *SandboxConfig) (bool, error) 
 	sandboxConfig.HypervisorConfig.VhostUserBlkDevices = vhostUserBlkDevices
 
 	return coldPlugVFIO, nil
+}
+
+func setHypervisorConfigAnnotations(sandboxConfig *SandboxConfig) {
+	if len(sandboxConfig.Containers) > 0 {
+		// These values are required by remote hypervisor
+		for _, a := range []string{cri.SandboxName, crio.SandboxName} {
+			if value, ok := sandboxConfig.Containers[0].Annotations[a]; ok {
+				sandboxConfig.HypervisorConfig.SandboxName = value
+			}
+		}
+
+		for _, a := range []string{cri.SandboxNamespace, crio.Namespace} {
+			if value, ok := sandboxConfig.Containers[0].Annotations[a]; ok {
+				sandboxConfig.HypervisorConfig.SandboxNamespace = value
+			}
+		}
+	}
 }
 
 func (s *Sandbox) createResourceController() error {
@@ -2168,12 +2189,13 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 		s.Logger().Debug("no resources updated: static resource management is set")
 		return nil
 	}
+
 	sandboxVCPUs, err := s.calculateSandboxCPUs()
 	if err != nil {
 		return err
 	}
 	// Add default vcpus for sandbox
-	sandboxVCPUs += s.hypervisor.HypervisorConfig().NumVCPUs
+	sandboxVCPUs += s.hypervisor.HypervisorConfig().NumVCPUsF
 
 	sandboxMemoryByte, sandboxneedPodSwap, sandboxSwapByte := s.calculateSandboxMemory()
 
@@ -2196,7 +2218,7 @@ func (s *Sandbox) updateResources(ctx context.Context) error {
 
 	// Update VCPUs
 	s.Logger().WithField("cpus-sandbox", sandboxVCPUs).Debugf("Request to hypervisor to update vCPUs")
-	oldCPUs, newCPUs, err := s.hypervisor.ResizeVCPUs(ctx, sandboxVCPUs)
+	oldCPUs, newCPUs, err := s.hypervisor.ResizeVCPUs(ctx, RoundUpNumVCPUs(sandboxVCPUs))
 	if err != nil {
 		return err
 	}
@@ -2392,8 +2414,8 @@ func (s *Sandbox) calculateSandboxMemory() (uint64, bool, int64) {
 	return memorySandbox, needPodSwap, swapSandbox
 }
 
-func (s *Sandbox) calculateSandboxCPUs() (uint32, error) {
-	mCPU := uint32(0)
+func (s *Sandbox) calculateSandboxCPUs() (float32, error) {
+	floatCPU := float32(0)
 	cpusetCount := int(0)
 
 	for _, c := range s.config.Containers {
@@ -2405,7 +2427,7 @@ func (s *Sandbox) calculateSandboxCPUs() (uint32, error) {
 
 		if cpu := c.Resources.CPU; cpu != nil {
 			if cpu.Period != nil && cpu.Quota != nil {
-				mCPU += utils.CalculateMilliCPUs(*cpu.Quota, *cpu.Period)
+				floatCPU += utils.CalculateCPUsF(*cpu.Quota, *cpu.Period)
 			}
 
 			set, err := cpuset.Parse(cpu.Cpus)
@@ -2419,11 +2441,11 @@ func (s *Sandbox) calculateSandboxCPUs() (uint32, error) {
 	// If we aren't being constrained, then we could have two scenarios:
 	//  1. BestEffort QoS: no proper support today in Kata.
 	//  2. We could be constrained only by CPUSets. Check for this:
-	if mCPU == 0 && cpusetCount > 0 {
-		return uint32(cpusetCount), nil
+	if floatCPU == 0 && cpusetCount > 0 {
+		return float32(cpusetCount), nil
 	}
 
-	return utils.CalculateVCpusFromMilliCpus(mCPU), nil
+	return floatCPU, nil
 }
 
 // GetHypervisorType is used for getting Hypervisor name currently used.

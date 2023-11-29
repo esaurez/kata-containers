@@ -12,7 +12,7 @@
 #[cfg(target_arch = "aarch64")]
 use dbs_arch::pmu::PmuError;
 #[cfg(feature = "dbs-virtio-devices")]
-use dbs_virtio_devices::Error as VirtIoError;
+use dbs_virtio_devices::Error as VirtioError;
 
 use crate::{address_space_manager, device_manager, resource_manager, vcpu, vm};
 
@@ -149,7 +149,7 @@ pub enum StartMicroVmError {
     #[cfg(feature = "virtio-vsock")]
     /// Failed to create the vsock device.
     #[error("cannot create virtio-vsock device: {0}")]
-    CreateVsockDevice(#[source] VirtIoError),
+    CreateVsockDevice(#[source] VirtioError),
 
     #[cfg(feature = "virtio-vsock")]
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
@@ -193,6 +193,11 @@ pub enum StartMicroVmError {
     /// Virtio-balloon errors.
     #[error("virtio-balloon errors: {0}")]
     BalloonDeviceError(#[source] device_manager::balloon_dev_mgr::BalloonDeviceError),
+
+    /// Vhost-net device errors.
+    #[cfg(feature = "vhost-net")]
+    #[error("vhost-net errors: {0:?}")]
+    VhostNetDeviceError(#[source] device_manager::vhost_net_dev_mgr::VhostNetDeviceError),
 }
 
 /// Errors associated with starting the instance.
@@ -236,5 +241,5 @@ pub enum EpollError {
     #[cfg(feature = "dbs-virtio-devices")]
     /// Errors from virtio devices.
     #[error("failed to manager Virtio device: {0}")]
-    VirtIoDevice(#[source] VirtIoError),
+    VirtioDevice(#[source] VirtioError),
 }

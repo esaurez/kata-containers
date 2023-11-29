@@ -9,7 +9,6 @@ use std::any::Any;
 use std::cmp;
 use std::io::{self, Read, Write};
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::Deref;
 use std::os::unix::io::AsRawFd;
 use std::sync::{mpsc, Arc};
@@ -18,12 +17,11 @@ use dbs_device::resources::ResourceConstraint;
 use dbs_utils::epoll_manager::{
     EpollManager, EventOps, EventSet, Events, MutEventSubscriber, SubscriberId,
 };
-use dbs_utils::metric::{IncMetric, SharedIncMetric};
+use dbs_utils::metric::IncMetric;
 use dbs_utils::net::{net_gen, MacAddr, Tap, MAC_ADDR_LEN};
 use dbs_utils::rate_limiter::{BucketUpdate, RateLimiter, TokenType};
 use libc;
 use log::{debug, error, info, trace, warn};
-use serde::Serialize;
 use virtio_bindings::bindings::virtio_net::*;
 use virtio_queue::{QueueOwnedT, QueueSync, QueueT};
 use vm_memory::{Bytes, GuestAddress, GuestAddressSpace, GuestMemoryRegion, GuestRegionMmap};
@@ -31,8 +29,8 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::device::{VirtioDeviceConfig, VirtioDeviceInfo};
 use crate::{
-    ActivateError, ActivateResult, ConfigResult, DbsGuestAddressSpace, Error, Result, VirtioDevice,
-    VirtioQueueConfig, TYPE_NET,
+    vnet_hdr_len, ActivateError, ActivateResult, ConfigResult, DbsGuestAddressSpace, Error,
+    NetDeviceMetrics, Result, TapError, VirtioDevice, VirtioQueueConfig, TYPE_NET,
 };
 
 const NET_DRIVER_NAME: &str = "virtio-net";
@@ -60,50 +58,8 @@ pub const NET_EVENTS_COUNT: u32 = 6;
 /// Error for virtio-net devices to handle requests from guests.
 #[derive(Debug, thiserror::Error)]
 pub enum NetError {
-    /// Open tap device failed.
-    #[error("open tap device failed: {0}")]
-    TapOpen(#[source] dbs_utils::net::TapError),
-    /// Setting tap interface offload flags failed.
-    #[error("set tap device vnet header size failed: {0}")]
-    TapSetOffload(#[source] dbs_utils::net::TapError),
-    /// Setting vnet header size failed.
-    #[error("set tap device vnet header size failed: {0}")]
-    TapSetVnetHdrSize(#[source] dbs_utils::net::TapError),
-}
-
-/// Metrics specific to the net device.
-#[derive(Default, Serialize)]
-pub struct NetDeviceMetrics {
-    /// Number of times when handling events on a network device.
-    pub event_count: SharedIncMetric,
-    /// Number of times when activate failed on a network device.
-    pub activate_fails: SharedIncMetric,
-    /// Number of times when interacting with the space config of a network device failed.
-    pub cfg_fails: SharedIncMetric,
-    /// Number of times when handling events on a network device failed.
-    pub event_fails: SharedIncMetric,
-    /// Number of events associated with the receiving queue.
-    pub rx_queue_event_count: SharedIncMetric,
-    /// Number of events associated with the rate limiter installed on the receiving path.
-    pub rx_event_rate_limiter_count: SharedIncMetric,
-    /// Number of events received on the associated tap.
-    pub rx_tap_event_count: SharedIncMetric,
-    /// Number of bytes received.
-    pub rx_bytes_count: SharedIncMetric,
-    /// Number of packets received.
-    pub rx_packets_count: SharedIncMetric,
-    /// Number of errors while receiving data.
-    pub rx_fails: SharedIncMetric,
-    /// Number of transmitted bytes.
-    pub tx_bytes_count: SharedIncMetric,
-    /// Number of errors while transmitting data.
-    pub tx_fails: SharedIncMetric,
-    /// Number of transmitted packets.
-    pub tx_packets_count: SharedIncMetric,
-    /// Number of events associated with the transmitting queue.
-    pub tx_queue_event_count: SharedIncMetric,
-    /// Number of events associated with the rate limiter installed on the transmitting path.
-    pub tx_rate_limiter_event_count: SharedIncMetric,
+    #[error("tap device operation error: {0:?}")]
+    TapError(#[source] TapError),
 }
 
 struct TxVirtio<Q: QueueT> {
@@ -148,10 +104,6 @@ impl<Q: QueueT> RxVirtio<Q> {
             frame_buf: [0u8; MAX_BUFFER_SIZE],
         }
     }
-}
-
-fn vnet_hdr_len() -> usize {
-    mem::size_of::<virtio_net_hdr_v1>()
 }
 
 #[allow(dead_code)]
@@ -665,11 +617,11 @@ impl<AS: GuestAddressSpace> Net<AS> {
         tap.set_offload(
             net_gen::TUN_F_CSUM | net_gen::TUN_F_UFO | net_gen::TUN_F_TSO4 | net_gen::TUN_F_TSO6,
         )
-        .map_err(NetError::TapSetOffload)?;
+        .map_err(|err| Error::VirtioNet(NetError::TapError(TapError::SetOffload(err))))?;
 
         let vnet_hdr_size = vnet_hdr_len() as i32;
         tap.set_vnet_hdr_size(vnet_hdr_size)
-            .map_err(NetError::TapSetVnetHdrSize)?;
+            .map_err(|err| Error::VirtioNet(NetError::TapError(TapError::SetVnetHdrSize(err))))?;
         info!("net tap set finished");
 
         let mut avail_features = 1u64 << VIRTIO_NET_F_GUEST_CSUM
@@ -722,7 +674,8 @@ impl<AS: GuestAddressSpace> Net<AS> {
         tx_rate_limiter: Option<RateLimiter>,
     ) -> Result<Self> {
         info!("open net tap {}", host_dev_name);
-        let tap = Tap::open_named(host_dev_name.as_str(), false).map_err(NetError::TapOpen)?;
+        let tap = Tap::open_named(host_dev_name.as_str(), false)
+            .map_err(|err| Error::VirtioNet(NetError::TapError(TapError::Open(err))))?;
         info!("net tap opened");
 
         Self::new_with_tap(

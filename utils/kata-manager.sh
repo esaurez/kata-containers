@@ -27,6 +27,10 @@ readonly kata_releases_url="https://api.github.com/repos/${kata_slug}/releases"
 readonly containerd_releases_url="https://api.github.com/repos/${containerd_slug}/releases"
 readonly containerd_io_releases_url="https://raw.githubusercontent.com/containerd/containerd.io/main/content/releases.md"
 
+readonly docker_slug="moby/moby"
+readonly docker_project="Docker (moby)"
+readonly docker_releases_url="https://api.github.com/repos/${docker_slug}/releases"
+
 # Directory created when unpacking a binary release archive downloaded from
 # $kata_releases_url.
 readonly kata_install_dir="${kata_install_dir:-/opt/kata}"
@@ -109,7 +113,7 @@ github_get_latest_release()
 	local latest
 	latest=$(curl -sL "$url" |\
 		jq -r '.[].tag_name | select(contains("-") | not)' |\
-		sort -t "." -k1,1n -k2,2n -k3,3n |\
+		sort -t '.' -V |\
 		tail -1 || true)
 
 	[ -z "$latest" ] && die "Cannot determine latest release from $url"
@@ -260,6 +264,8 @@ Options:
  -f           : Force installation (use with care).
  -h           : Show this help statement.
  -k <version> : Specify Kata Containers version.
+ -K <tarball> : Specify local Kata Containers tarball to install (takes priority over '-k').
+ -l           : List installed and available versions only, then exit (uses network).
  -o           : Only install Kata Containers.
  -r           : Don't cleanup on failure (retain files).
  -t           : Disable self test (don't try to create a container after install).
@@ -279,9 +285,12 @@ $warnings
 
 Advice:
 
-- You can check the latest version of Kata Containers by running:
+- You can check the latest version of Kata Containers by running
+  one of the following:
 
+  $ $script_name -l
   $ kata-runtime check --only-list-releases
+  $ kata-ctl check only-list-releases
 
 EOF
 }
@@ -575,29 +584,36 @@ configure_containerd()
 install_kata()
 {
 	local requested_version="${1:-}"
+	local kata_tarball="${2:-}"
 
 	local project="$kata_project"
 
-	local version_desc="latest version"
-	[ -n "$requested_version" ] && version_desc="version $requested_version"
+	local version=""
+	if [ -z "$kata_tarball" ]
+	then
+		local version_desc="latest version"
+		[ -n "$requested_version" ] && version_desc="version $requested_version"
+	
+		info "Downloading $project release ($version_desc)"
+	
+		local results
+		results=$(github_download_package \
+			"$kata_releases_url" \
+			"$requested_version" \
+			"$project")
+	
+		[ -z "$results" ] && die "Cannot download $project release file"
+	
+		version=$(echo "$results"|cut -d: -f1)
 
-	info "Downloading $project release ($version_desc)"
+		[ -z "$version" ] && die "Cannot determine $project resolved version"
 
-	local results
-	results=$(github_download_package \
-		"$kata_releases_url" \
-		"$requested_version" \
-		"$project")
+		local file
+		file=$(echo "$results"|cut -d: -f2-)
+	else
+		file="$kata_tarball"
+	fi
 
-	[ -z "$results" ] && die "Cannot download $project release file"
-
-	local version
-	version=$(echo "$results"|cut -d: -f1)
-
-	local file
-	file=$(echo "$results"|cut -d: -f2-)
-
-	[ -z "$version" ] && die "Cannot determine $project resolved version"
 	[ -z "$file" ] && die "Cannot determine $project release file"
 
 	# Allow the containerd service to find the Kata shim and users to find
@@ -619,7 +635,12 @@ install_kata()
 
 	[ -n "$unexpected" ] && die "File '$file' contains unexpected paths: '$unexpected'"
 
-	info "Installing $project release $version from $file"
+	if [ -n "$kata_tarball" ]
+	then
+		info "Installing $project release from $file"
+	else
+		info "Installing $project release $version from $file"
+	fi
 
 	sudo tar -C / -xvf "${file}"
 
@@ -672,11 +693,12 @@ configure_kata()
 handle_kata()
 {
 	local version="${1:-}"
+	local tarball="${2:-}"
 
-	local enable_debug="${2:-}"
+	local enable_debug="${3:-}"
 	[ -z "$enable_debug" ] && die "no enable debug value"
 
-	install_kata "$version" "$enable_debug"
+	install_kata "$version" "$tarball"
 
 	configure_kata "$enable_debug"
 
@@ -772,7 +794,7 @@ test_installation()
 	local image="docker.io/library/busybox:latest"
 	sudo $tool image pull "$image"
 
-	local container_name="test-kata"
+	local container_name="${script_name/./-}-test-kata"
 
 	# Used to prove that the kernel in the container
 	# is different to the host kernel.
@@ -830,10 +852,10 @@ handle_installation()
 	# These params can be blank
 	local kata_version="${7:-}"
 	local containerd_flavour="${8:-}"
-
 	local install_docker="${9:-}"
 	[ -z "$install_docker" ] && die "no install docker value"
 
+	local kata_tarball="${10:-}"
 	# The tool to be testing the installation with
 	local tool="ctr"
 
@@ -853,7 +875,7 @@ handle_installation()
 
 	setup "$cleanup" "$force" "$skip_containerd"
 
-	handle_kata "$kata_version" "$enable_debug"
+	handle_kata "$kata_version" "$kata_tarball" "$enable_debug"
 
 	[ "$skip_containerd" = "false" ] && \
 		handle_containerd \
@@ -885,6 +907,55 @@ validate_containerd_flavour()
 	grep -qE "$flavours_regex" <<< "$flavour" || die "expected flavour to match '$flavours_regex', found '$flavour'"
 }
 
+list_versions()
+{
+	local -r not_installed='<not installed>'
+
+	# The latest available checks will hit the network so inform the
+	# user what we are doing in case of network delays.
+	info "Getting version details"
+
+	local installed_kata
+	installed_kata=$("$kata_shim_v2" --version 2>/dev/null ||\
+		echo "$not_installed")
+
+	local installed_containerd
+	installed_containerd=$(containerd --version 2>/dev/null ||\
+		echo "$not_installed")
+
+	local installed_docker
+	installed_docker=$(docker --version 2>/dev/null ||\
+		echo "$not_installed")
+
+	local latest_kata
+	latest_kata=$(github_get_latest_release "$kata_releases_url" || true)
+	[ -z "$latest_kata" ] && \
+		die "cannot determine latest version of $project"
+
+	local latest_containerd
+	latest_containerd=$(github_get_latest_release "$containerd_releases_url" || true)
+	[ -z "$latest_containerd" ] && \
+		die "cannot determine latest version of $containerd_project"
+
+	local latest_docker
+	latest_docker=$(github_get_latest_release "$docker_releases_url" || true)
+	[ -z "$latest_docker" ] && \
+		die "cannot determine latest version of $docker_project"
+
+	info "$kata_project: installed version: $installed_kata"
+	info "$kata_project: latest version: $latest_kata"
+
+	echo
+
+	info "$containerd_project: installed version: $installed_containerd"
+	info "$containerd_project: latest version: $latest_containerd"
+
+	echo
+
+	info "$docker_project: installed version: $installed_docker"
+	info "$docker_project: latest version: $latest_docker"
+}
+
 handle_args()
 {
 	local cleanup="true"
@@ -894,13 +965,15 @@ handle_args()
 	local only_run_test="false"
 	local enable_debug="false"
 	local install_docker="false"
+	local list_versions='false'
 
 	local opt
 
 	local kata_version=""
 	local containerd_flavour="lts"
+	local kata_tarball=""
 
-	while getopts "c:dDfhk:ortT" opt "$@"
+	while getopts "c:dDfhk:K:lortT" opt "$@"
 	do
 		case "$opt" in
 			c) containerd_flavour="$OPTARG" ;;
@@ -909,6 +982,8 @@ handle_args()
 			f) force="true" ;;
 			h) usage; exit 0 ;;
 			k) kata_version="$OPTARG" ;;
+			K) kata_tarball="$OPTARG" ;;
+			l) list_versions='true' ;;
 			o) skip_containerd="true" ;;
 			r) cleanup="false" ;;
 			t) disable_test="true" ;;
@@ -919,6 +994,8 @@ handle_args()
 	done
 
 	shift $[$OPTIND-1]
+
+	[ "$list_versions" = 'true' ] && list_versions && exit 0
 
 	[ -z "$kata_version" ] && kata_version="${1:-}" || true
 	[ -z "$containerd_flavour" ] && containerd_flavour="${2:-}" || true
@@ -934,7 +1011,8 @@ handle_args()
 		"$only_run_test" \
 		"$kata_version" \
 		"$containerd_flavour" \
-		"$install_docker"
+		"$install_docker" \
+		"$kata_tarball"
 }
 
 main()
