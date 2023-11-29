@@ -115,6 +115,11 @@ assets:
       url: "https://github.com/AMDESE/qemu"
       tag: "3b6a2b6b7466f6dea53243900b7516c3f29027b7"
 
+    stratovirt:
+      description: "StratoVirt is an lightweight opensource VMM"
+      url: "https://github.com/openeuler-mirror/stratovirt"
+      version: "v2.3.0"
+
   image:
     description: |
       Root filesystem disk image used to boot the guest virtual
@@ -169,7 +174,7 @@ assets:
   kernel:
     description: "Linux kernel optimised for virtual machines"
     url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/"
-    version: "v6.1.52"
+    version: "v6.1.62"
     sev:
       description: "Linux kernel that supports SEV and SNP"
       url: "https://cdn.kernel.org/pub/linux/kernel/v5.x/"
@@ -182,7 +187,7 @@ assets:
   kernel-arm-experimental:
     description: "Linux kernel with cpu/mem hotplug support on arm64"
     url: "https://cdn.kernel.org/pub/linux/kernel/v5.x/"
-    version: "v5.15.7"
+    version: "v5.15.138"
 
   kernel-dragonball-experimental:
     description: "Linux kernel with Dragonball VMM optimizations like upcall"

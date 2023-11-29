@@ -41,8 +41,15 @@ pub mod mem;
 #[cfg(feature = "virtio-balloon")]
 pub mod balloon;
 
+#[cfg(feature = "vhost")]
+pub mod vhost;
+
 use std::io::Error as IOError;
 
+#[cfg(any(feature = "virtio-net", feature = "vhost-net"))]
+use dbs_utils::metric::SharedIncMetric;
+#[cfg(any(feature = "virtio-net", feature = "vhost-net"))]
+use serde::Serialize;
 use virtio_queue::Error as VqError;
 use vm_memory::{GuestAddress, GuestAddressSpace, GuestMemoryError};
 
@@ -118,6 +125,32 @@ pub enum ActivateError {
     InvalidQueueConfig,
     #[error("IO: {0}.")]
     IOError(#[from] IOError),
+    #[error("Virtio error")]
+    VirtioError(Error),
+    #[error("Epoll manager error")]
+    EpollMgr(dbs_utils::epoll_manager::Error),
+    #[cfg(feature = "vhost")]
+    #[error("Vhost activate error")]
+    VhostActivate(vhost_rs::Error),
+}
+
+impl std::convert::From<Error> for ActivateError {
+    fn from(error: Error) -> ActivateError {
+        ActivateError::VirtioError(error)
+    }
+}
+
+impl std::convert::From<dbs_utils::epoll_manager::Error> for ActivateError {
+    fn from(error: dbs_utils::epoll_manager::Error) -> ActivateError {
+        ActivateError::EpollMgr(error)
+    }
+}
+
+#[cfg(feature = "vhost")]
+impl std::convert::From<vhost_rs::Error> for ActivateError {
+    fn from(error: vhost_rs::Error) -> ActivateError {
+        ActivateError::VhostActivate(error)
+    }
 }
 
 /// Error code for VirtioDevice::read_config()/write_config().
@@ -148,6 +181,9 @@ pub enum Error {
     /// Guest gave us a descriptor that was too big to use.
     #[error("descriptor length too big.")]
     DescriptorLengthTooBig,
+    /// Error from the epoll event manager
+    #[error("dbs_utils error: {0:?}.")]
+    EpollMgr(dbs_utils::epoll_manager::Error),
     /// Guest gave us a write only descriptor that protocol says to read from.
     #[error("unexpected write only descriptor.")]
     UnexpectedWriteOnlyDescriptor,
@@ -174,7 +210,7 @@ pub enum Error {
     VirtioQueueError(#[from] VqError),
     /// Error from Device activate.
     #[error("Device activate error: {0}")]
-    ActivateError(#[from] ActivateError),
+    ActivateError(#[from] Box<ActivateError>),
     /// Error from Interrupt.
     #[error("Interrupt error: {0}")]
     InterruptError(IOError),
@@ -201,14 +237,19 @@ pub enum Error {
     #[error("virtio-vsock error: {0}")]
     VirtioVsockError(#[from] self::vsock::VsockError),
 
-    #[cfg(feature = "virtio-net")]
-    #[error("Virtio-net error: {0}")]
-    VirtioNetError(#[from] crate::net::NetError),
-
     #[cfg(feature = "virtio-fs")]
     /// Error from Virtio fs.
     #[error("virtio-fs error: {0}")]
     VirtioFs(fs::Error),
+
+    #[cfg(feature = "virtio-net")]
+    #[error("virtio-net error: {0:?}")]
+    VirtioNet(net::NetError),
+
+    #[cfg(feature = "vhost-net")]
+    #[error("vhost-net error: {0:?}")]
+    /// Error from vhost-net.
+    VhostNet(vhost::vhost_kern::net::Error),
 
     #[cfg(feature = "virtio-mem")]
     #[error("Virtio-mem error: {0}")]
@@ -217,6 +258,77 @@ pub enum Error {
     #[cfg(feature = "virtio-balloon")]
     #[error("Virtio-balloon error: {0}")]
     VirtioBalloonError(#[from] balloon::BalloonError),
+    
+    #[cfg(feature = "vhost")]
+    /// Error from the vhost subsystem
+    #[error("Vhost error: {0:?}")]
+    VhostError(vhost_rs::Error),
+    #[cfg(feature = "vhost")]
+    /// Error from the vhost user subsystem
+    #[error("Vhost-user error: {0:?}")]
+    VhostUserError(vhost_rs::vhost_user::Error),
+}
+
+// Error for tap devices
+#[cfg(any(feature = "virtio-net", feature = "vhost-net"))]
+#[derive(Debug, thiserror::Error)]
+pub enum TapError {
+    #[error("missing {0} flags")]
+    MissingFlags(String),
+
+    #[error("failed to set offload: {0:?}")]
+    SetOffload(#[source] dbs_utils::net::TapError),
+
+    #[error("failed to set vnet_hdr_size: {0}")]
+    SetVnetHdrSize(#[source] dbs_utils::net::TapError),
+
+    #[error("failed to open a tap device: {0}")]
+    Open(#[source] dbs_utils::net::TapError),
+
+    #[error("failed to enable a tap device: {0}")]
+    Enable(#[source] dbs_utils::net::TapError),
+}
+
+#[cfg(any(feature = "virtio-net", feature = "vhost-net"))]
+#[inline]
+pub fn vnet_hdr_len() -> usize {
+    std::mem::size_of::<virtio_bindings::bindings::virtio_net::virtio_net_hdr_v1>()
+}
+
+/// Metrics specific to the net device.
+#[cfg(any(feature = "virtio-net", feature = "vhost-net"))]
+#[derive(Default, Serialize)]
+pub struct NetDeviceMetrics {
+    /// Number of times when handling events on a network device.
+    pub event_count: SharedIncMetric,
+    /// Number of times when activate failed on a network device.
+    pub activate_fails: SharedIncMetric,
+    /// Number of times when interacting with the space config of a network device failed.
+    pub cfg_fails: SharedIncMetric,
+    /// Number of times when handling events on a network device failed.
+    pub event_fails: SharedIncMetric,
+    /// Number of events associated with the receiving queue.
+    pub rx_queue_event_count: SharedIncMetric,
+    /// Number of events associated with the rate limiter installed on the receiving path.
+    pub rx_event_rate_limiter_count: SharedIncMetric,
+    /// Number of events received on the associated tap.
+    pub rx_tap_event_count: SharedIncMetric,
+    /// Number of bytes received.
+    pub rx_bytes_count: SharedIncMetric,
+    /// Number of packets received.
+    pub rx_packets_count: SharedIncMetric,
+    /// Number of errors while receiving data.
+    pub rx_fails: SharedIncMetric,
+    /// Number of transmitted bytes.
+    pub tx_bytes_count: SharedIncMetric,
+    /// Number of errors while transmitting data.
+    pub tx_fails: SharedIncMetric,
+    /// Number of transmitted packets.
+    pub tx_packets_count: SharedIncMetric,
+    /// Number of events associated with the transmitting queue.
+    pub tx_queue_event_count: SharedIncMetric,
+    /// Number of events associated with the rate limiter installed on the transmitting path.
+    pub tx_rate_limiter_event_count: SharedIncMetric,
 }
 
 /// Specialized std::result::Result for Virtio device operations.

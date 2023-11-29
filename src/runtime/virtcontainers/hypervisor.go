@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -47,18 +48,24 @@ const (
 	// ClhHypervisor is the ICH hypervisor.
 	ClhHypervisor HypervisorType = "clh"
 
+	// StratovirtHypervisor is the StratoVirt hypervisor.
+	StratovirtHypervisor HypervisorType = "stratovirt"
+
 	// DragonballHypervisor is the Dragonball hypervisor.
 	DragonballHypervisor HypervisorType = "dragonball"
 
 	// VirtFrameworkHypervisor is the Darwin Virtualization.framework hypervisor
 	VirtframeworkHypervisor HypervisorType = "virtframework"
 
+	// RemoteHypervisor is the Remote hypervisor.
+	RemoteHypervisor HypervisorType = "remote"
+
 	// MockHypervisor is a mock hypervisor for testing purposes
 	MockHypervisor HypervisorType = "mock"
 
 	procCPUInfo = "/proc/cpuinfo"
 
-	defaultVCPUs = 1
+	defaultVCPUs = float32(1)
 	// 2 GiB
 	defaultMemSzMiB = 2048
 
@@ -236,6 +243,9 @@ func (hType *HypervisorType) Set(value string) error {
 	case "virtframework":
 		*hType = VirtframeworkHypervisor
 		return nil
+	case "remote":
+		*hType = RemoteHypervisor
+		return nil
 	case "mock":
 		*hType = MockHypervisor
 		return nil
@@ -255,6 +265,10 @@ func (hType *HypervisorType) String() string {
 		return string(AcrnHypervisor)
 	case ClhHypervisor:
 		return string(ClhHypervisor)
+	case StratovirtHypervisor:
+		return string(StratovirtHypervisor)
+	case RemoteHypervisor:
+		return string(RemoteHypervisor)
 	case MockHypervisor:
 		return string(MockHypervisor)
 	default:
@@ -449,6 +463,15 @@ type HypervisorConfig struct {
 	// BlockiDeviceAIO specifies the I/O API to be used.
 	BlockDeviceAIO string
 
+	// The socket to connect to the remote hypervisor implementation on
+	RemoteHypervisorSocket string
+
+	// The name of the sandbox (pod)
+	SandboxName string
+
+	// The name of the namespace of the sandbox (pod)
+	SandboxNamespace string
+
 	// The user maps to the uid.
 	User string
 
@@ -524,7 +547,7 @@ type HypervisorConfig struct {
 	ColdPlugVFIO config.PCIePort
 
 	// NumVCPUs specifies default number of vCPUs for the VM.
-	NumVCPUs uint32
+	NumVCPUsF float32
 
 	//DefaultMaxVCPUs specifies the maximum number of vCPUs for the VM.
 	DefaultMaxVCPUs uint32
@@ -556,6 +579,9 @@ type HypervisorConfig struct {
 
 	// Group ID.
 	Gid uint32
+
+	// Timeout for actions e.g. startVM for the remote hypervisor
+	RemoteHypervisorTimeout uint32
 
 	// BlockDeviceCacheSet specifies cache-related options will be set to block devices or not.
 	BlockDeviceCacheSet bool
@@ -836,6 +862,14 @@ func (conf *HypervisorConfig) FirmwareAssetPath() (string, error) {
 // FirmwareVolumeAssetPath returns the guest firmware volume path
 func (conf *HypervisorConfig) FirmwareVolumeAssetPath() (string, error) {
 	return conf.assetPath(types.FirmwareVolumeAsset)
+}
+
+func RoundUpNumVCPUs(cpus float32) uint32 {
+	return uint32(math.Ceil(float64(cpus)))
+}
+
+func (conf HypervisorConfig) NumVCPUs() uint32 {
+	return RoundUpNumVCPUs(conf.NumVCPUsF)
 }
 
 func appendParam(params []Param, parameter string, value string) []Param {

@@ -69,6 +69,8 @@ const (
 
 	NydusRootFSType = "fuse.nydus-overlayfs"
 
+	VirtualVolumePrefix = "io.katacontainers.volume="
+
 	// enable debug console
 	kernelParamDebugConsole           = "agent.debug_console"
 	kernelParamDebugConsoleVPort      = "agent.debug_console_vport"
@@ -78,40 +80,45 @@ const (
 	defaultSeLinuxContainerType = "container_t"
 )
 
+type customRequestTimeoutKeyType struct{}
+
 var (
-	checkRequestTimeout           = 30 * time.Second
-	defaultRequestTimeout         = 60 * time.Second
-	errorMissingOCISpec           = errors.New("Missing OCI specification")
-	defaultKataHostSharedDir      = "/run/kata-containers/shared/sandboxes/"
-	defaultKataGuestSharedDir     = "/run/kata-containers/shared/containers/"
-	defaultKataGuestNydusRootDir  = "/run/kata-containers/shared/"
-	mountGuestTag                 = "kataShared"
-	defaultKataGuestSandboxDir    = "/run/kata-containers/sandbox/"
-	type9pFs                      = "9p"
-	typeVirtioFS                  = "virtiofs"
-	typeOverlayFS                 = "overlay"
-	kata9pDevType                 = "9p"
-	kataMmioBlkDevType            = "mmioblk"
-	kataBlkDevType                = "blk"
-	kataBlkCCWDevType             = "blk-ccw"
-	kataSCSIDevType               = "scsi"
-	kataNvdimmDevType             = "nvdimm"
-	kataVirtioFSDevType           = "virtio-fs"
-	kataOverlayDevType            = "overlayfs"
-	kataWatchableBindDevType      = "watchable-bind"
-	kataVfioPciDevType            = "vfio-pci"    // VFIO PCI device to used as VFIO in the container
-	kataVfioPciGuestKernelDevType = "vfio-pci-gk" // VFIO PCI device for consumption by the guest kernel
-	kataVfioApDevType             = "vfio-ap"
-	sharedDir9pOptions            = []string{"trans=virtio,version=9p2000.L,cache=mmap", "nodev"}
-	sharedDirVirtioFSOptions      = []string{}
-	sharedDirVirtioFSDaxOptions   = "dax"
-	shmDir                        = "shm"
-	kataEphemeralDevType          = "ephemeral"
-	defaultEphemeralPath          = filepath.Join(defaultKataGuestSandboxDir, kataEphemeralDevType)
-	grpcMaxDataSize               = int64(1024 * 1024)
-	localDirOptions               = []string{"mode=0777"}
-	maxHostnameLen                = 64
-	GuestDNSFile                  = "/etc/resolv.conf"
+	checkRequestTimeout              = 30 * time.Second
+	defaultRequestTimeout            = 60 * time.Second
+	remoteRequestTimeout             = 300 * time.Second
+	customRequestTimeoutKey          = customRequestTimeoutKeyType(struct{}{})
+	errorMissingOCISpec              = errors.New("Missing OCI specification")
+	defaultKataHostSharedDir         = "/run/kata-containers/shared/sandboxes/"
+	defaultKataGuestSharedDir        = "/run/kata-containers/shared/containers/"
+	defaultKataGuestNydusRootDir     = "/run/kata-containers/shared/"
+	defaultKataGuestVirtualVolumedir = "/run/kata-containers/virtual-volumes/"
+	mountGuestTag                    = "kataShared"
+	defaultKataGuestSandboxDir       = "/run/kata-containers/sandbox/"
+	type9pFs                         = "9p"
+	typeVirtioFS                     = "virtiofs"
+	typeOverlayFS                    = "overlay"
+	kata9pDevType                    = "9p"
+	kataMmioBlkDevType               = "mmioblk"
+	kataBlkDevType                   = "blk"
+	kataBlkCCWDevType                = "blk-ccw"
+	kataSCSIDevType                  = "scsi"
+	kataNvdimmDevType                = "nvdimm"
+	kataVirtioFSDevType              = "virtio-fs"
+	kataOverlayDevType               = "overlayfs"
+	kataWatchableBindDevType         = "watchable-bind"
+	kataVfioPciDevType               = "vfio-pci"    // VFIO PCI device to used as VFIO in the container
+	kataVfioPciGuestKernelDevType    = "vfio-pci-gk" // VFIO PCI device for consumption by the guest kernel
+	kataVfioApDevType                = "vfio-ap"
+	sharedDir9pOptions               = []string{"trans=virtio,version=9p2000.L,cache=mmap", "nodev"}
+	sharedDirVirtioFSOptions         = []string{}
+	sharedDirVirtioFSDaxOptions      = "dax"
+	shmDir                           = "shm"
+	kataEphemeralDevType             = "ephemeral"
+	defaultEphemeralPath             = filepath.Join(defaultKataGuestSandboxDir, kataEphemeralDevType)
+	grpcMaxDataSize                  = int64(1024 * 1024)
+	localDirOptions                  = []string{"mode=0777"}
+	maxHostnameLen                   = 64
+	GuestDNSFile                     = "/etc/resolv.conf"
 )
 
 const (
@@ -376,6 +383,8 @@ func (k *kataAgent) agentURL() (string, error) {
 		return s.String(), nil
 	case types.HybridVSock:
 		return s.String(), nil
+	case types.RemoteSock:
+		return s.String(), nil
 	case types.MockHybridVSock:
 		return s.String(), nil
 	default:
@@ -426,6 +435,7 @@ func (k *kataAgent) configure(ctx context.Context, h Hypervisor, id, sharePath s
 		if err != nil {
 			return err
 		}
+	case types.RemoteSock:
 	case types.MockHybridVSock:
 	default:
 		return types.ErrInvalidConfigType
@@ -745,36 +755,42 @@ func (k *kataAgent) startSandbox(ctx context.Context, sandbox *Sandbox) error {
 		return err
 	}
 
-	// Check grpc server is serving
-	if err = k.check(ctx); err != nil {
-		return err
-	}
+	var kmodules []*grpc.KernelModule
 
-	// If a Policy has been specified, send it to the agent.
-	if len(sandbox.config.AgentConfig.Policy) > 0 {
-		if err := sandbox.agent.setPolicy(ctx, sandbox.config.AgentConfig.Policy); err != nil {
+	if sandbox.config.HypervisorType == RemoteHypervisor {
+		ctx = context.WithValue(ctx, customRequestTimeoutKey, remoteRequestTimeout)
+	} else {
+		// Check grpc server is serving
+		if err = k.check(ctx); err != nil {
 			return err
 		}
-	}
 
-	// Setup network interfaces and routes
-	interfaces, routes, neighs, err := generateVCNetworkStructures(ctx, sandbox.network)
-	if err != nil {
-		return err
-	}
-	if err = k.updateInterfaces(ctx, interfaces); err != nil {
-		return err
-	}
-	if _, err = k.updateRoutes(ctx, routes); err != nil {
-		return err
-	}
-	if err = k.addARPNeighbors(ctx, neighs); err != nil {
-		return err
+		// If a Policy has been specified, send it to the agent.
+		if len(sandbox.config.AgentConfig.Policy) > 0 {
+			if err := sandbox.agent.setPolicy(ctx, sandbox.config.AgentConfig.Policy); err != nil {
+				return err
+			}
+		}
+
+		// Setup network interfaces and routes
+		interfaces, routes, neighs, err := generateVCNetworkStructures(ctx, sandbox.network)
+		if err != nil {
+			return err
+		}
+		if err = k.updateInterfaces(ctx, interfaces); err != nil {
+			return err
+		}
+		if _, err = k.updateRoutes(ctx, routes); err != nil {
+			return err
+		}
+		if err = k.addARPNeighbors(ctx, neighs); err != nil {
+			return err
+		}
+
+		kmodules = setupKernelModules(k.kmodules)
 	}
 
 	storages := setupStorages(ctx, sandbox)
-
-	kmodules := setupKernelModules(k.kmodules)
 
 	req := &grpc.CreateSandboxRequest{
 		Hostname:      hostname,
@@ -1185,6 +1201,10 @@ func (k *kataAgent) appendDevices(deviceList []*grpc.Device, c *Container) []*gr
 			return nil
 		}
 
+		if strings.HasPrefix(dev.ContainerPath, defaultKataGuestVirtualVolumedir) {
+			continue
+		}
+
 		switch device.DeviceType() {
 		case config.DeviceBlock:
 			kataDevice = k.appendBlockDevice(dev, device, c)
@@ -1194,7 +1214,7 @@ func (k *kataAgent) appendDevices(deviceList []*grpc.Device, c *Container) []*gr
 			kataDevice = k.appendVfioDevice(dev, device, c)
 		}
 
-		if kataDevice == nil {
+		if kataDevice == nil || kataDevice.Type == "" {
 			continue
 		}
 
@@ -1243,12 +1263,17 @@ func (k *kataAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Co
 		return nil, err
 	}
 
-	if sharedRootfs.storage != nil {
+	if sharedRootfs.containerStorages != nil {
 		// Add rootfs to the list of container storage.
-		// We only need to do this for block based rootfs, as we
+		ctrStorages = append(ctrStorages, sharedRootfs.containerStorages...)
+	}
+
+	if sharedRootfs.volumeStorages != nil {
+		// Add volumeStorages to the list of container storage.
+		// We only need to do this for KataVirtualVolume based rootfs, as we
 		// want the agent to mount it into the right location
-		// (kataGuestSharedDir/ctrID/
-		ctrStorages = append(ctrStorages, sharedRootfs.storage)
+
+		ctrStorages = append(ctrStorages, sharedRootfs.volumeStorages...)
 	}
 
 	ociSpec := c.GetPatchedOCISpec()
@@ -1523,14 +1548,11 @@ func (k *kataAgent) handleLocalStorage(mounts []specs.Mount, sandboxID string, r
 	return localStorages, nil
 }
 
-// handleDeviceBlockVolume handles volume that is block device file
-// and DeviceBlock type.
-func (k *kataAgent) handleDeviceBlockVolume(c *Container, m Mount, device api.Device) (*grpc.Storage, error) {
+func handleBlockVolume(c *Container, device api.Device) (*grpc.Storage, error) {
 	vol := &grpc.Storage{}
 
 	blockDrive, ok := device.GetDeviceInfo().(*config.BlockDrive)
 	if !ok || blockDrive == nil {
-		k.Logger().Error("malformed block drive")
 		return nil, fmt.Errorf("malformed block drive")
 	}
 	switch {
@@ -1554,6 +1576,22 @@ func (k *kataAgent) handleDeviceBlockVolume(c *Container, m Mount, device api.De
 		vol.Source = blockDrive.SCSIAddr
 	default:
 		return nil, fmt.Errorf("Unknown block device driver: %s", c.sandbox.config.HypervisorConfig.BlockDeviceDriver)
+	}
+	return vol, nil
+}
+
+// handleVirtualVolumeStorageObject handles KataVirtualVolume that is block device file.
+func handleVirtualVolumeStorageObject(c *Container, blockDeviceId string, virtVolume *types.KataVirtualVolume) (*grpc.Storage, error) {
+	var vol *grpc.Storage = &grpc.Storage{}
+	return vol, nil
+}
+
+// handleDeviceBlockVolume handles volume that is block device file
+// and DeviceBlock type.
+func (k *kataAgent) handleDeviceBlockVolume(c *Container, m Mount, device api.Device) (*grpc.Storage, error) {
+	vol, err := handleBlockVolume(c, device)
+	if err != nil {
+		return nil, err
 	}
 
 	vol.MountPoint = m.Destination
@@ -2104,7 +2142,12 @@ func (k *kataAgent) getReqContext(ctx context.Context, reqName string) (newCtx c
 	case grpcCheckRequest:
 		newCtx, cancel = context.WithTimeout(ctx, checkRequestTimeout)
 	default:
-		newCtx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		var requestTimeout = defaultRequestTimeout
+
+		if timeout, ok := ctx.Value(customRequestTimeoutKey).(time.Duration); ok {
+			requestTimeout = timeout
+		}
+		newCtx, cancel = context.WithTimeout(ctx, requestTimeout)
 	}
 
 	return newCtx, cancel

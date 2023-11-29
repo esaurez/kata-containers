@@ -16,7 +16,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use dragonball::{
     api::v1::{
         BlockDeviceConfigInfo, BootSourceConfig, FsDeviceConfigInfo, FsMountConfigInfo,
-        InstanceInfo, InstanceState, VcpuResizeInfo, VirtioNetDeviceConfigInfo, VmmAction,
+        InstanceInfo, InstanceState, NetworkInterfaceConfig, VcpuResizeInfo, VmmAction,
         VmmActionError, VmmData, VmmRequest, VmmResponse, VmmService, VsockDeviceConfigInfo,
     },
     vm::VmConfigInfo,
@@ -26,7 +26,7 @@ use nix::sched::{setns, CloneFlags};
 use seccompiler::BpfProgram;
 use vmm_sys_util::eventfd::EventFd;
 
-use crate::ShareFsOperation;
+use crate::ShareFsMountOperation;
 
 pub enum Request {
     Sync(VmmAction),
@@ -216,7 +216,7 @@ impl VmmInstance {
         Ok(())
     }
 
-    pub fn insert_network_device(&self, net_cfg: VirtioNetDeviceConfigInfo) -> Result<()> {
+    pub fn insert_network_device(&self, net_cfg: NetworkInterfaceConfig) -> Result<()> {
         self.handle_request_with_retry(Request::Sync(VmmAction::InsertNetworkDevice(
             net_cfg.clone(),
         )))
@@ -238,7 +238,7 @@ impl VmmInstance {
         Ok(())
     }
 
-    pub fn patch_fs(&self, cfg: &FsMountConfigInfo, op: ShareFsOperation) -> Result<()> {
+    pub fn patch_fs(&self, cfg: &FsMountConfigInfo, op: ShareFsMountOperation) -> Result<()> {
         self.handle_request(Request::Sync(VmmAction::ManipulateFsBackendFs(cfg.clone())))
             .with_context(|| {
                 format!(

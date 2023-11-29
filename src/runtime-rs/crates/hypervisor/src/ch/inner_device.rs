@@ -10,8 +10,8 @@ use crate::BlockDevice;
 use crate::HybridVsockDevice;
 use crate::NetworkConfig;
 use crate::PciPath;
+use crate::ShareFsConfig;
 use crate::ShareFsDevice;
-use crate::ShareFsDeviceConfig;
 use crate::VfioDevice;
 use crate::VmmState;
 use anyhow::{anyhow, Context, Result};
@@ -106,6 +106,10 @@ impl CloudHypervisorInner {
             DeviceType::Vfio(vfiodev) => self.remove_vfio_device(&vfiodev).await,
             _ => Ok(()),
         }
+    }
+
+    pub(crate) async fn update_device(&mut self, _device: DeviceType) -> Result<()> {
+        Ok(())
     }
 
     async fn handle_share_fs_device(&mut self, sharefs: ShareFsDevice) -> Result<DeviceType> {
@@ -363,12 +367,12 @@ impl TryFrom<NetworkConfig> for NetConfig {
 }
 #[derive(Debug)]
 pub struct ShareFsSettings {
-    cfg: ShareFsDeviceConfig,
+    cfg: ShareFsConfig,
     vm_path: String,
 }
 
 impl ShareFsSettings {
-    pub fn new(cfg: ShareFsDeviceConfig, vm_path: String) -> Self {
+    pub fn new(cfg: ShareFsConfig, vm_path: String) -> Self {
         ShareFsSettings { cfg, vm_path }
     }
 }
@@ -413,7 +417,7 @@ impl TryFrom<ShareFsSettings> for FsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Address;
+    use crate::{Address, Backend};
 
     #[test]
     fn test_networkconfig_to_netconfig() {
@@ -424,6 +428,10 @@ mod tests {
             queue_num: 2,
             guest_mac: None,
             index: 1,
+            allow_duplicate_mac: false,
+            use_generic_irq: None,
+            use_shared_irq: None,
+            backend: Backend::default(),
         };
 
         let net = NetConfig::try_from(cfg.clone());

@@ -158,7 +158,7 @@ function clean_env_ctr()
 	info "Wait until the containers gets removed"
 
 	for task_id in "${running_tasks[@]}"; do
-		sudo timeout -s SIGKILL 30s ctr t kill -a -s SIGTERM ${task_id} >/dev/null 2>&1 || true
+		sudo timeout -s SIGKILL 30s ctr t kill -a -s SIGKILL ${task_id} >/dev/null 2>&1 || true
 		sleep 0.5
 	done
 
@@ -179,6 +179,7 @@ function clean_env_ctr()
 		[ "$count_running" -eq 0 ] && break
 
 		remaining_attempts=$((remaining_attempts-1))
+		sleep 0.5
 	done
 
 	count_tasks="$(sudo ctr t list -q | wc -l)"
@@ -221,6 +222,13 @@ function restart_systemd_service_with_no_burst_limit() {
 	then
 		local unit_file=$(systemctl show "$service.service" -p FragmentPath | cut -d'=' -f2)
 		[ -f "$unit_file" ] || { warn "Can't find $service's unit file: $unit_file"; return 1; }
+
+		# If the unit file is in /lib, copy it to /etc
+		if [[ $unit_file == /lib* ]]; then
+			tmp_unit_file="/etc/${unit_file#*lib/}"
+			sudo cp "$unit_file" "$tmp_unit_file"
+			unit_file="$tmp_unit_file"
+		fi
 
 		local start_burst_set=$(sudo grep StartLimitBurst $unit_file | wc -l)
 		if [ "$start_burst_set" -eq 0 ]
@@ -549,6 +557,24 @@ default_capabilities = [
 EOF
 
 	sudo systemctl enable --now crio
+}
+
+function install_docker() {
+	# Add Docker's official GPG key
+	sudo apt-get update
+	sudo apt-get -y install ca-certificates curl gnupg
+	sudo install -m 0755 -d /etc/apt/keyrings
+	curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+	sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+	# Add the repository to Apt sources:
+	echo \
+		"deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+		"$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+		sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+	sudo apt-get update
+
+	sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
 # Convert architecture to the name used by golang
