@@ -275,6 +275,10 @@ MONITOR = kata-monitor
 MONITOR_OUTPUT = $(CURDIR)/$(MONITOR)
 MONITOR_DIR = $(CLI_DIR)/kata-monitor
 
+CLH_POD = clh-pod
+CLH_POD_OUTPUT = $(CURDIR)/$(CLH_POD)
+CLH_POD_DIR = $(CLI_DIR)/clh-pod
+
 
 SOURCES := $(shell find . 2>&1 | grep -E '.*\.(c|h|go)$$')
 VERSION := ${shell cat ./VERSION}
@@ -726,6 +730,8 @@ containerd-shim-v2: $(SHIMV2_OUTPUT)
 
 monitor: $(MONITOR_OUTPUT)
 
+clh-pod: $(CLH_POD_OUTPUT)
+
 runtime: $(RUNTIME_OUTPUT) $(CONFIGS)
 .DEFAULT: default
 
@@ -777,6 +783,9 @@ $(RUNTIME_OUTPUT): $(SOURCES) $(GENERATED_FILES) $(MAKEFILE_LIST) | show-summary
 
 $(SHIMV2_OUTPUT): $(SOURCES) $(GENERATED_FILES) $(MAKEFILE_LIST)
 	$(QUIET_BUILD)(cd $(SHIMV2_DIR)/ && go build -ldflags "$(KATA_LDFLAGS)" $(BUILDFLAGS) -o $@ .)
+
+$(CLH_POD_OUTPUT): $(SOURCES) $(GENERATED_FILES) $(MAKEFILE_LIST)
+	$(QUIET_BUILD)(cd $(CLH_POD_DIR)/ && go build -ldflags "$(KATA_LDFLAGS)" $(BUILDFLAGS) -o $@ .)
 
 $(MONITOR_OUTPUT): $(SOURCES) $(GENERATED_FILES) $(MAKEFILE_LIST) .git-commit
 	$(QUIET_BUILD)(cd $(MONITOR_DIR)/ && go build \

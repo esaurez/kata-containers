@@ -671,6 +671,12 @@ type HypervisorConfig struct {
 
 	// ExtraMonitorSocket allows to add an extra HMP or QMP socket when the VMM is Qemu
 	ExtraMonitorSocket govmmQemu.MonitorProtocol
+
+	// Enables the use of a NimbleVM network device
+	NimbleVM bool
+
+	// Executable and arguments to be used for the NimbleVM proxy
+	NimbleVmProxy []string
 }
 
 // vcpu mapping from vcpu number to thread number

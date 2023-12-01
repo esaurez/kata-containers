@@ -166,6 +166,8 @@ type hypervisor struct {
 	DisableGuestSeLinux            bool                      `toml:"disable_guest_selinux"`
 	LegacySerial                   bool                      `toml:"use_legacy_serial"`
 	ExtraMonitorSocket             govmmQemu.MonitorProtocol `toml:"extra_monitor_socket"`
+	NimbleVM                       bool                      `toml:"enable_nimble_vm"`
+	NimbleVMProxy                  []string                  `toml:"nimble_vm_proxy_exec_and_args"`
 }
 
 type runtime struct {
@@ -378,6 +380,18 @@ func (h hypervisor) machineType() string {
 	return h.MachineType
 }
 
+func (h hypervisor) nimbleVmProxy() ([]string, error) {
+	if h.NimbleVMProxy == nil {
+		return []string{"/usr/bin/nimble-vm-proxy"}, nil
+	}
+	// Rewrite the first argument with the resolved path
+	// to the nimble-vm-proxy binary.
+	var err error
+
+	h.NimbleVMProxy[0], err = ResolvePath(h.NimbleVMProxy[0])
+	return h.NimbleVMProxy, err
+}
+
 func (h hypervisor) GetEntropySource() string {
 	if h.EntropySource == "" {
 		return defaultEntropySource
@@ -489,6 +503,13 @@ func (h hypervisor) defaultVirtioFSCache() string {
 	}
 
 	return h.VirtioFSCache
+}
+
+func (h hypervisor) defaultNimbleVMProxy() []string {
+	if h.NimbleVMProxy == nil {
+		return []string{"/usr/bin/nimble-vm-proxy"}
+	}
+	return h.NimbleVMProxy
 }
 
 func (h hypervisor) blockDeviceDriver() (string, error) {
@@ -1066,6 +1087,14 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 			fmt.Errorf("cannot enable %s without daemon path in configuration file", sharedFS)
 	}
 
+	var nimbleVMProxy []string
+	if h.NimbleVM {
+		nimbleVMProxy, err = h.nimbleVmProxy()
+		if err != nil {
+			return vc.HypervisorConfig{}, err
+		}
+	}
+
 	return vc.HypervisorConfig{
 		HypervisorPath:                 hypervisor,
 		HypervisorPathList:             h.HypervisorPathList,
@@ -1124,6 +1153,8 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		DiskRateLimiterBwOneTimeBurst:  h.getDiskRateLimiterBwOneTimeBurst(),
 		DiskRateLimiterOpsMaxRate:      h.getDiskRateLimiterOpsMaxRate(),
 		DiskRateLimiterOpsOneTimeBurst: h.getDiskRateLimiterOpsOneTimeBurst(),
+		NimbleVM:                       h.NimbleVM,
+		NimbleVmProxy:                  nimbleVMProxy,
 	}, nil
 }
 
@@ -1474,6 +1505,7 @@ func GetDefaultHypervisorConfig() vc.HypervisorConfig {
 		DisableSeccomp:           defaultDisableSeccomp,
 		DisableGuestSeLinux:      defaultDisableGuestSeLinux,
 		LegacySerial:             defaultLegacySerial,
+		NimbleVM:                 defaultNimbleVM,
 	}
 }
 
