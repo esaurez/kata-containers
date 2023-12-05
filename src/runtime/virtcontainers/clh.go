@@ -615,6 +615,10 @@ func (clh *cloudHypervisor) CreateVM(ctx context.Context, id string, network Net
 	}
 	clh.vmconfig.Console.SetIommu(clh.config.IOMMU)
 
+	if clh.config.NimbleVM {
+		clh.vmconfig.NimbleNet = clh.getNimbleNetConfig()
+	}
+
 	cpu_topology := chclient.NewCpuTopology()
 	cpu_topology.ThreadsPerCore = func(i int32) *int32 { return &i }(1)
 	cpu_topology.CoresPerDie = func(i int32) *int32 { return &i }(int32(clh.config.DefaultMaxVCPUs))
@@ -711,7 +715,9 @@ func (clh *cloudHypervisor) StartVM(ctx context.Context, timeout int) error {
 	}
 	clh.state.PID = pid
 
-	ctx, cancel := context.WithTimeout(ctx, clh.getClhAPITimeout()*time.Second)
+	// TODO: delete this hardcoded value
+	duration_timeout := time.Duration(timeout) * time.Second
+	ctx, cancel := context.WithTimeout(ctx, duration_timeout)
 	defer cancel()
 
 	if err := clh.bootVM(ctx); err != nil {
@@ -1668,6 +1674,18 @@ func (clh *cloudHypervisor) addVolume(volume types.Volume) error {
 
 	clh.Logger().Debug("Adding share volume to hypervisor: ", volume.MountTag)
 	return nil
+}
+
+func (clh *cloudHypervisor) getNimbleNetConfig() *[]chclient.NimbleNetConfig {
+	if clh.config.NimbleVMSocketPath == "" || clh.config.NimbleVMNumQueues == 0 || clh.config.NimbleVMQueueSize == 0 || clh.config.NimbleVMSharedMemorySize == 0 {
+		return nil
+	}
+	nimble_net := chclient.NewNimbleNetConfig(clh.config.NimbleVMSocketPath)
+	nimble_net.SetNumQueues(clh.config.NimbleVMNumQueues)
+	nimble_net.SetQueueSize(clh.config.NimbleVMQueueSize)
+	nimble_net.SetVhostMode("Client")
+	nimble_net.SetSize(clh.config.NimbleVMSharedMemorySize)
+	return &[]chclient.NimbleNetConfig{*nimble_net}
 }
 
 // cleanupVM will remove generated files and directories related with the virtual machine

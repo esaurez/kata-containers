@@ -16,26 +16,27 @@ import (
 
 // VmConfig Virtual machine configuration
 type VmConfig struct {
-	Cpus     *CpusConfig     `json:"cpus,omitempty"`
-	Memory   *MemoryConfig   `json:"memory,omitempty"`
-	Payload  PayloadConfig   `json:"payload"`
-	Disks    *[]DiskConfig   `json:"disks,omitempty"`
-	Net      *[]NetConfig    `json:"net,omitempty"`
-	Rng      *RngConfig      `json:"rng,omitempty"`
-	Balloon  *BalloonConfig  `json:"balloon,omitempty"`
-	Fs       *[]FsConfig     `json:"fs,omitempty"`
-	Pmem     *[]PmemConfig   `json:"pmem,omitempty"`
-	Serial   *ConsoleConfig  `json:"serial,omitempty"`
-	Console  *ConsoleConfig  `json:"console,omitempty"`
-	Devices  *[]DeviceConfig `json:"devices,omitempty"`
-	Vdpa     *[]VdpaConfig   `json:"vdpa,omitempty"`
-	Vsock    *VsockConfig    `json:"vsock,omitempty"`
-	SgxEpc   *[]SgxEpcConfig `json:"sgx_epc,omitempty"`
-	Numa     *[]NumaConfig   `json:"numa,omitempty"`
-	Iommu    *bool           `json:"iommu,omitempty"`
-	Watchdog *bool           `json:"watchdog,omitempty"`
-	Platform *PlatformConfig `json:"platform,omitempty"`
-	Tpm      *TpmConfig      `json:"tpm,omitempty"`
+	Cpus      *CpusConfig        `json:"cpus,omitempty"`
+	Memory    *MemoryConfig      `json:"memory,omitempty"`
+	Payload   PayloadConfig      `json:"payload"`
+	Disks     *[]DiskConfig      `json:"disks,omitempty"`
+	Net       *[]NetConfig       `json:"net,omitempty"`
+	Rng       *RngConfig         `json:"rng,omitempty"`
+	Balloon   *BalloonConfig     `json:"balloon,omitempty"`
+	Fs        *[]FsConfig        `json:"fs,omitempty"`
+	Pmem      *[]PmemConfig      `json:"pmem,omitempty"`
+	NimbleNet *[]NimbleNetConfig `json:"nimble_net,omitempty"`
+	Serial    *ConsoleConfig     `json:"serial,omitempty"`
+	Console   *ConsoleConfig     `json:"console,omitempty"`
+	Devices   *[]DeviceConfig    `json:"devices,omitempty"`
+	Vdpa      *[]VdpaConfig      `json:"vdpa,omitempty"`
+	Vsock     *VsockConfig       `json:"vsock,omitempty"`
+	SgxEpc    *[]SgxEpcConfig    `json:"sgx_epc,omitempty"`
+	Numa      *[]NumaConfig      `json:"numa,omitempty"`
+	Iommu     *bool              `json:"iommu,omitempty"`
+	Watchdog  *bool              `json:"watchdog,omitempty"`
+	Platform  *PlatformConfig    `json:"platform,omitempty"`
+	Tpm       *TpmConfig         `json:"tpm,omitempty"`
 }
 
 // NewVmConfig instantiates a new VmConfig object
@@ -342,6 +343,39 @@ func (o *VmConfig) HasPmem() bool {
 // SetPmem gets a reference to the given []PmemConfig and assigns it to the Pmem field.
 func (o *VmConfig) SetPmem(v []PmemConfig) {
 	o.Pmem = &v
+}
+
+
+// GetNimbleNet returns the NimbleNet field value if set, zero value otherwise.
+func (o *VmConfig) GetNimbleNet() []NimbleNetConfig {
+        if o == nil || o.NimbleNet == nil {
+                var ret []NimbleNetConfig
+                return ret
+        }
+        return *o.NimbleNet
+}
+
+// GetNimbleNetOk returns a tuple with the NimbleNet field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *VmConfig) GetNimbleNetOk() ([]NimbleNetConfig, bool) {
+        if o == nil || o.NimbleNet == nil {
+                return nil, false
+        }
+        return *o.NimbleNet, true
+}
+
+// HasNimbleNet returns a boolean if a field has been set.
+func (o *VmConfig) HasNimbleNet() bool {
+        if o != nil && o.NimbleNet == nil {
+                return true
+        }
+
+        return false
+}
+
+// SetNimbleNet gets a reference to the given NimbleNetConfig and assigns it to the NimbleNet field.
+func (o *VmConfig) SetNimbleNet(v []NimbleNetConfig) {
+        o.NimbleNet = &v
 }
 
 // GetSerial returns the Serial field value if set, zero value otherwise.
@@ -724,6 +758,9 @@ func (o VmConfig) MarshalJSON() ([]byte, error) {
 	}
 	if o.Pmem != nil {
 		toSerialize["pmem"] = o.Pmem
+	}
+	if o.NimbleNet != nil {
+		toSerialize["nimble_net"] = o.NimbleNet
 	}
 	if o.Serial != nil {
 		toSerialize["serial"] = o.Serial

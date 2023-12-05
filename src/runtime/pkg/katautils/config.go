@@ -1087,14 +1087,6 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 			fmt.Errorf("cannot enable %s without daemon path in configuration file", sharedFS)
 	}
 
-	var nimbleVMProxy []string
-	if h.NimbleVM {
-		nimbleVMProxy, err = h.nimbleVmProxy()
-		if err != nil {
-			return vc.HypervisorConfig{}, err
-		}
-	}
-
 	return vc.HypervisorConfig{
 		HypervisorPath:                 hypervisor,
 		HypervisorPathList:             h.HypervisorPathList,
@@ -1154,7 +1146,6 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		DiskRateLimiterOpsMaxRate:      h.getDiskRateLimiterOpsMaxRate(),
 		DiskRateLimiterOpsOneTimeBurst: h.getDiskRateLimiterOpsOneTimeBurst(),
 		NimbleVM:                       h.NimbleVM,
-		NimbleVmProxy:                  nimbleVMProxy,
 	}, nil
 }
 

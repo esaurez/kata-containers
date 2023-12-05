@@ -207,6 +207,9 @@ const (
 	// HybridVirtioVsockDev is a hybrid virtio-vsock device supported
 	// only on certain hypervisors, like firecracker.
 	HybridVirtioVsockDev
+
+	// Device to support NimbleVM networking
+	NimbleNet
 )
 
 type MemoryDevice struct {
@@ -675,8 +678,21 @@ type HypervisorConfig struct {
 	// Enables the use of a NimbleVM network device
 	NimbleVM bool
 
-	// Executable and arguments to be used for the NimbleVM proxy
-	NimbleVmProxy []string
+	// Following variables are only used when NimbleVM is enabled
+	// Nimble VM shared memory size
+	NimbleVMSharedMemorySize int32
+
+	// Nimble VM number of queues
+	NimbleVMNumQueues int32
+
+	// Nimble VM queue size
+	NimbleVMQueueSize int32
+
+	// Nimble VM socket path
+	NimbleVMSocketPath string
+
+	// Nimble VM vhost user mode
+	NimbleVMVhostUserMode bool
 }
 
 // vcpu mapping from vcpu number to thread number
