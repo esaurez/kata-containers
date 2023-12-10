@@ -167,7 +167,11 @@ type hypervisor struct {
 	LegacySerial                   bool                      `toml:"use_legacy_serial"`
 	ExtraMonitorSocket             govmmQemu.MonitorProtocol `toml:"extra_monitor_socket"`
 	NimbleVM                       bool                      `toml:"enable_nimble_vm"`
-	NimbleVMProxy                  []string                  `toml:"nimble_vm_proxy_exec_and_args"`
+	NimbleVMSocketPath             string                    `toml:"nimble_vm_socket_path"`
+	NimbleVMSharedMemorySize       int32                     `toml:"nimble_vm_shared_memory_size"`
+	NimbleVMNumQueues              int32                     `toml:"nimble_vm_num_queues"`
+	NimbleVMQueueSize              int32                     `toml:"nimble_vm_queue_size"`
+	NimbleVMVhostUserMode          string                    `toml:"nimble_vm_vhost_user_mode"`
 }
 
 type runtime struct {
@@ -380,18 +384,6 @@ func (h hypervisor) machineType() string {
 	return h.MachineType
 }
 
-func (h hypervisor) nimbleVmProxy() ([]string, error) {
-	if h.NimbleVMProxy == nil {
-		return []string{"/usr/bin/nimble-vm-proxy"}, nil
-	}
-	// Rewrite the first argument with the resolved path
-	// to the nimble-vm-proxy binary.
-	var err error
-
-	h.NimbleVMProxy[0], err = ResolvePath(h.NimbleVMProxy[0])
-	return h.NimbleVMProxy, err
-}
-
 func (h hypervisor) GetEntropySource() string {
 	if h.EntropySource == "" {
 		return defaultEntropySource
@@ -503,13 +495,6 @@ func (h hypervisor) defaultVirtioFSCache() string {
 	}
 
 	return h.VirtioFSCache
-}
-
-func (h hypervisor) defaultNimbleVMProxy() []string {
-	if h.NimbleVMProxy == nil {
-		return []string{"/usr/bin/nimble-vm-proxy"}
-	}
-	return h.NimbleVMProxy
 }
 
 func (h hypervisor) blockDeviceDriver() (string, error) {
@@ -683,6 +668,39 @@ func (h hypervisor) getRemoteHypervisorTimeout() uint32 {
 		return defaultRemoteHypervisorTimeout
 	}
 	return h.RemoteHypervisorTimeout
+}
+
+func (h hypervisor) nimbleVmSharedMemorySize() int32 {
+	if h.NimbleVMSharedMemorySize == 0 {
+		return 1 * 1024 * 1024 // 1MiB
+	}
+
+	return h.NimbleVMSharedMemorySize
+}
+
+func (h hypervisor) nimbleVmNumQueues() int32 {
+	if h.NimbleVMNumQueues == 0 {
+		return 1
+	}
+
+	return h.NimbleVMNumQueues
+}
+
+func (h hypervisor) nimbleVmQueueSize() int32 {
+	if h.NimbleVMQueueSize == 0 {
+		return 2
+	}
+
+	return h.NimbleVMQueueSize
+}
+
+func (h hypervisor) nimbleVmVhostUserMode() string {
+	if h.NimbleVMVhostUserMode == "" {
+		return "Client"
+	}
+
+	return h.NimbleVMVhostUserMode
+
 }
 
 func (a agent) debugConsoleEnabled() bool {
@@ -1146,6 +1164,11 @@ func newClhHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		DiskRateLimiterOpsMaxRate:      h.getDiskRateLimiterOpsMaxRate(),
 		DiskRateLimiterOpsOneTimeBurst: h.getDiskRateLimiterOpsOneTimeBurst(),
 		NimbleVM:                       h.NimbleVM,
+		NimbleVMSharedMemorySize:       h.nimbleVmSharedMemorySize(),
+		NimbleVMNumQueues:              h.nimbleVmNumQueues(),
+		NimbleVMQueueSize:              h.nimbleVmQueueSize(),
+		NimbleVMSocketPath:             h.NimbleVMSocketPath,
+		NimbleVMVhostUserMode:          h.nimbleVmVhostUserMode(),
 	}, nil
 }
 

@@ -62,7 +62,7 @@ var sandboxTracingTags = map[string]string{
 const (
 	// VmStartTimeout represents the time in seconds a sandbox can wait before
 	// to consider the VM starting operation failed.
-	VmStartTimeout = 10
+	VmStartTimeout = 1000
 
 	// DirMode is the permission bits used for creating a directory
 	DirMode = os.FileMode(0750) | os.ModeDir
@@ -91,6 +91,9 @@ const (
 	// As an example: 12 GiB hotplugged -> 3 Mi pages -> 192 MiBytes overhead (3Mi x 64B).
 	// This is approximately what should be free in a relatively unloaded 256 MiB guest (75% of available memory). So, 256 Mi x 48 => 12 Gi
 	acpiMemoryHotplugFactor = 48
+
+	// defaultDemikernelIP is the default IP address for the demikernel
+	defaultDemikernelIP = "10.2.0.9"
 )
 
 var (
@@ -1486,6 +1489,101 @@ func (s *Sandbox) addContainer(c *Container) error {
 	return nil
 }
 
+func mountFile(container_config *ContainerConfig, source string, destination string) error {
+	container_config.CustomSpec.Mounts = append(container_config.CustomSpec.Mounts,
+		specs.Mount{
+			Destination: destination,
+			Source:      source,
+			Type:        "bind",
+			Options:     []string{"rbind", "ro"},
+		})
+
+	// Add mount to both config and spec in the container_config
+	container_config.Mounts = append(container_config.Mounts, Mount{
+		Source:      source,
+		Destination: destination,
+		Options:     []string{"rbind", "ro"},
+		Type:        "bind",
+		ReadOnly:    true,
+	})
+
+	return nil
+}
+
+func addNimbleComponents(container_config *ContainerConfig) error {
+
+	// Add the configuration file.
+	// The config host location is in /tmp/<container_id>-demikernel.yaml
+	config_host_location := fmt.Sprintf("/tmp/%s-demikernel.yaml", container_config.ID)
+	// Create yaml configuration if the loc
+	if _, err := os.Stat(config_host_location); os.IsNotExist(err) {
+		// Create the file
+		f, err := os.Create(config_host_location)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		// Write the yaml configuration
+		// Get the IP from the annotations or use a default IP
+		var ip string
+		if val, ok := container_config.Annotations["demikernel_ip"]; ok {
+			ip = val
+		} else {
+			ip = defaultDemikernelIP
+		}
+
+		// The structure of the configuration yaml is "catnip" -> "my_ipv4_addr" -> ip
+		f.Write([]byte("catnip:\n"))
+		f.Write([]byte("  my_ipv4_addr: " + ip + "\n"))
+	}
+
+	if err := mountFile(container_config, config_host_location, defaultNimbleConfigPath); err != nil {
+		return err
+	}
+
+	major := int64(247)
+	minor := int64(0)
+	device_type := "c"
+
+	// Add the nimble device, which would be mounted in the container at /dev/virtio_nimblenet_dev
+	// With 247, 0 being the major and minor numbers respectively
+	container_config.DeviceInfos = append(container_config.DeviceInfos, config.DeviceInfo{
+		HostPath:      defaultNimbleDevicePath,
+		ContainerPath: defaultNimbleDevicePath,
+		DevType:       device_type,
+		Major:         major,
+		Minor:         minor,
+	})
+
+	// Add device also to the oci spec in the linux devices
+	container_config.CustomSpec.Linux.Devices = append(container_config.CustomSpec.Linux.Devices, specs.LinuxDevice{
+		Path:  defaultNimbleDevicePath,
+		Type:  device_type,
+		Major: major,
+		Minor: minor,
+	})
+
+	// Add device to the allowed devices in the cgroup
+	container_config.Resources.Devices = append(container_config.Resources.Devices, specs.LinuxDeviceCgroup{
+		Type:   device_type,
+		Major:  &major,
+		Minor:  &minor,
+		Access: rwm,
+		Allow:  true,
+	})
+
+	container_config.CustomSpec.Linux.Resources.Devices = append(container_config.CustomSpec.Linux.Resources.Devices, specs.LinuxDeviceCgroup{
+		Type:   device_type,
+		Major:  &major,
+		Minor:  &minor,
+		Access: rwm,
+		Allow:  true,
+	})
+
+	return nil
+}
+
 // CreateContainer creates a new container in the sandbox
 // This should be called only when the sandbox is already created.
 // It will add new container config to sandbox.config.Containers
@@ -1503,6 +1601,10 @@ func (s *Sandbox) CreateContainer(ctx context.Context, contConfig ContainerConfi
 			}
 		}
 	}()
+
+	if err := addNimbleComponents(&s.config.Containers[len(s.config.Containers)-1]); err != nil {
+		return nil, err
+	}
 
 	// Create the container object, add devices to the sandbox's device-manager:
 	c, err := newContainer(ctx, s, &s.config.Containers[len(s.config.Containers)-1])
@@ -1827,6 +1929,9 @@ func (s *Sandbox) createContainers(ctx context.Context) error {
 	defer span.End()
 
 	for i := range s.config.Containers {
+		if err := addNimbleComponents(&s.config.Containers[i]); err != nil {
+			return err
+		}
 		c, err := newContainer(ctx, s, &s.config.Containers[i])
 		if err != nil {
 			return err
@@ -2717,6 +2822,10 @@ func (s *Sandbox) fetchContainers(ctx context.Context) error {
 		}
 		contConfig.CustomSpec = &spec
 		s.config.Containers[i] = contConfig
+
+		if err := addNimbleComponents(&s.config.Containers[i]); err != nil {
+			return err
+		}
 
 		c, err := newContainer(ctx, s, &s.config.Containers[i])
 		if err != nil {

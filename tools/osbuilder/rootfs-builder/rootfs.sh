@@ -648,7 +648,7 @@ EOF
 	popd
 	rm -rf demikernel
 	info "Compiling demikernel shim layer"
-	git clone https://github.com/demikernel/posix-shim.git
+	git clone https://github.com/esaurez/posix-shim.git
 	pushd posix-shim
 	git checkout dev
 	make all

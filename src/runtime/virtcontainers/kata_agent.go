@@ -78,6 +78,17 @@ const (
 
 	// Default SELinux type applied to the container process inside guest
 	defaultSeLinuxContainerType = "container_t"
+
+	// Default demikernel locations, this may be good to move as part of the sandbox configuration or the hypervisor configuration
+	defaultDemikernelGuestPath     = "/home/demikernel"
+	defaultDemikernelContainerPath = "/tmp/demikernel"
+	defaultNimbleLibPath           = "/tmp/demikernel/lib"
+	defaultNimbleSoPath            = "/usr/local/lib/libshim.so"
+	defaultDemikernelSoPath        = "/usr/local/lib/libdemikernel.so"
+	defaultNimbleConfigPath        = "/tmp/config.yaml"
+	defaultHostDemikernelSoPath    = "/home/demikernel/lib/libdemikernel.so"
+	defaultHostNimbleSoPath        = "/home/demikernel/lib/libshim.so"
+	defaultNimbleDevicePath        = "/dev/virtio_nimblenet_dev"
 )
 
 type customRequestTimeoutKeyType struct{}
@@ -1240,6 +1251,52 @@ func (k *kataAgent) rollbackFailingContainerCreation(ctx context.Context, c *Con
 	}
 }
 
+func getSpecMount(source string, destination string, mountType string, options []string) specs.Mount {
+	// Create a new Mount
+	mount := specs.Mount{
+		Source:      source,
+		Destination: destination,
+		Type:        mountType,
+		Options:     options,
+	}
+
+	return mount
+}
+
+func updateNimbleEnvs(proc_env *[]string) {
+	// Update LD_PRELOAD to point to the nimble .so
+	// This is required for the nimble VM to work
+	// properly
+	preload_found := false
+	ld_library_path_found := false
+	for i, env := range *proc_env {
+		if strings.HasPrefix(env, "LD_PRELOAD=") {
+			// \TODO properly append to the existing LD_PRELOAD, not overwrite it
+			(*proc_env)[i] = "LD_PRELOAD=libshim.so"
+			preload_found = true
+		} else if strings.HasPrefix(env, "LD_LIBRARY_PATH=") {
+			// extend the existing LD_LIBRARY_PATH
+			(*proc_env)[i] = fmt.Sprintf("%s:%s", "/usr/local/lib:/usr/lib/x86_64-linux-gnu", env)
+			ld_library_path_found = true
+		}
+		if preload_found && ld_library_path_found {
+			break
+		}
+	}
+
+	if !preload_found {
+		*proc_env = append(*proc_env, "LD_PRELOAD=libshim.so")
+	}
+
+	if !ld_library_path_found {
+		*proc_env = append(*proc_env, "LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu")
+	}
+
+	// Also append LIBOS=catloop and CONFIG_PATH=/tmp/config.yaml
+	*proc_env = append(*proc_env, "LIBOS=catloop")
+	*proc_env = append(*proc_env, fmt.Sprintf("CONFIG_PATH=%s", defaultNimbleConfigPath))
+}
+
 func (k *kataAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Container) (p *Process, err error) {
 	span, ctx := katatrace.Trace(ctx, k.Logger(), "createContainer", kataAgentTracingTags)
 	defer span.End()
@@ -1340,6 +1397,34 @@ func (k *kataAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Co
 	// Layer storage objects are prepended to the list so that they come _before_ the
 	// rootfs because the rootfs depends on them (it's an overlay of the layers).
 	ctrStorages = append(layerStorages, ctrStorages...)
+
+	// If this is a nimble VM, we need to mount the .so already presented in the guest
+	// to the container
+	// This has to be done after all the previous mounts operations to avoid it being overriden
+	if sandbox.config.HypervisorConfig.NimbleVM {
+		// TODO delete this mount, not required longer term
+		mount := getSpecMount(defaultDemikernelGuestPath, defaultDemikernelContainerPath, "bind", []string{"rbind", "ro"})
+		ociSpec.Mounts = append(ociSpec.Mounts, mount)
+
+		// Mount .so files
+		demikernel_mount := getSpecMount(defaultHostDemikernelSoPath, defaultDemikernelSoPath, "bind", []string{"rbind", "ro"})
+		ociSpec.Mounts = append(ociSpec.Mounts, demikernel_mount)
+
+		shim_mount := getSpecMount(defaultHostNimbleSoPath, defaultNimbleSoPath, "bind", []string{"rbind", "ro"})
+		ociSpec.Mounts = append(ociSpec.Mounts, shim_mount)
+
+		// updateNimbleEnvs(&ociSpec.Process.Env)
+
+		gcc_src := "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1"
+		gcc_dst := "/lib/x86_64-linux-gnu/libgcc_s.so.1"
+		gcc_mount := getSpecMount(gcc_src, gcc_dst, "bind", []string{"rbind", "ro"})
+		ociSpec.Mounts = append(ociSpec.Mounts, gcc_mount)
+
+		m_src := "/usr/lib/x86_64-linux-gnu/libm.so.6"
+		m_dst := "/lib/x86_64-linux-gnu/libm.so.6"
+		m_mount := getSpecMount(m_src, m_dst, "bind", []string{"rbind", "ro"})
+		ociSpec.Mounts = append(ociSpec.Mounts, m_mount)
+	}
 
 	grpcSpec, err := grpc.OCItoGRPC(ociSpec)
 	if err != nil {

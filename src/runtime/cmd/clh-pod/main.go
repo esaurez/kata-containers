@@ -129,6 +129,7 @@ func Example_createAndStartClhSandbox(ociSpec *specs.Spec, bundlePath string) {
 	// Use kata default values for the agent.
 	agConfig := vc.KataAgentConfig{
 		EnableDebugConsole: true,
+		Trace:              true,
 		DialTimeout:        60,
 		KernelModules:      []string{"virtio_kata_driver"},
 	}

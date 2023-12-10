@@ -691,8 +691,8 @@ type HypervisorConfig struct {
 	// Nimble VM socket path
 	NimbleVMSocketPath string
 
-	// Nimble VM vhost user mode
-	NimbleVMVhostUserMode bool
+	// Nimble VM vhost user mode (Client or Server)
+	NimbleVMVhostUserMode string
 }
 
 // vcpu mapping from vcpu number to thread number
