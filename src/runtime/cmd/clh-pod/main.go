@@ -75,7 +75,7 @@ func Example_createAndStartClhSandbox(ociSpec *specs.Spec, bundlePath string) {
 
 	// Sets the hypervisor configuration.
 	hypervisorConfig := vc.HypervisorConfig{
-		HypervisorPath:     "/home/quique/src/cloud-hypervisor/target/debug/cloud-hypervisor",
+		HypervisorPath:     "/home/quique/src/cloud-hypervisor/target/release/cloud-hypervisor",
 		HypervisorPathList: []string{"/home/quique/src/cloud-hypervisor/target/release/cloud-hypervisor"},
 		KernelPath:         "/usr/share/kata-containers/vmlinux.container",
 		ImagePath:          "/usr/share/kata-containers/kata-containers.img",

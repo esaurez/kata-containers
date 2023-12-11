@@ -642,9 +642,9 @@ EOF
 	pushd demikernel
 	git checkout feature-pal-virtio_shared_memory	
 	# TODO eliminate trace and debug, and use strip on the binaries of demikernel
-	RUST_LOG="trace" DEBUG=yes LIBOS=$LIBOS_MODE VM_SHM=yes make all
-	DEBUG=yes LIBOS=$LIBOS_MODE INSTALL_PREFIX=$DEMIKERNEL_HOME VM_SHM=yes make install
-	mv bin ${DEMIKERNEL_HOME}
+	make all LIBOS=$LIBOS_MODE VM_SHM=yes
+	make install LIBOS=$LIBOS_MODE INSTALL_PREFIX=$DEMIKERNEL_HOME VM_SHM=yes
+	# mv bin ${DEMIKERNEL_HOME}
 	popd
 	rm -rf demikernel
 	info "Compiling demikernel shim layer"
@@ -655,6 +655,35 @@ EOF
 	make install
 	popd
 	rm -rf posix-shim
+	popd
+
+	info "Compile redis"
+	export REDIS_HOME=${ROOTFS_DIR}/home/redis
+	mkdir -p ${REDIS_HOME}
+	pushd ${REDIS_HOME}
+	git clone https://github.com/redis/redis.git
+	pushd redis
+	git checkout 6.2
+	make -j$(nproc)
+	mv src/redis-server ${REDIS_HOME}
+	popd
+	rm -rf redis
+	popd
+
+	info "Compile socket-app"
+	export SOCKET_APP_HOME=${ROOTFS_DIR}/home/socket-app
+	mkdir -p ${SOCKET_APP_HOME}
+	pushd ${SOCKET_APP_HOME}
+	git clone https://github.com/esaurez/socket_app.git
+	pushd socket_app
+	mkdir -p build
+	pushd build
+	cmake -DCOMPILE_SERVER=ON  ..
+	make -j$(nproc)
+	popd
+	popd
+	mv socket_app/build/server_exe ${SOCKET_APP_HOME}
+	rm -rf socket_app
 	popd
 
 	[ -x "${AGENT_DEST}" ] || die "${AGENT_DEST} is not installed in ${ROOTFS_DIR}"
