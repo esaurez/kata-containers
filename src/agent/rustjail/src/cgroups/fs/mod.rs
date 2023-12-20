@@ -644,6 +644,15 @@ lazy_static! {
                 minor: Some(200),
                 access: "rwm".to_string(),
             },
+
+            // Access to the virtio nimble device
+            LinuxDeviceCgroup {
+                allow: true,
+                r#type: "c".to_string(),
+                major: Some(247),
+                minor: Some(0),
+                access: "rwm".to_string(),
+            },
         ]
     };
 }

@@ -644,7 +644,7 @@ EOF
 	# TODO eliminate trace and debug, and use strip on the binaries of demikernel
 	make all LIBOS=$LIBOS_MODE VM_SHM=yes
 	make install LIBOS=$LIBOS_MODE INSTALL_PREFIX=$DEMIKERNEL_HOME VM_SHM=yes
-	# mv bin ${DEMIKERNEL_HOME}
+	mv bin ${DEMIKERNEL_HOME}
 	popd
 	rm -rf demikernel
 	info "Compiling demikernel shim layer"
