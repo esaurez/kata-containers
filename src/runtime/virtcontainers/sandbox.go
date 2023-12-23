@@ -1515,28 +1515,32 @@ func addNimbleComponents(container_config *ContainerConfig) error {
 	// Add the configuration file.
 	// The config host location is in /tmp/<container_id>-demikernel.yaml
 	config_host_location := fmt.Sprintf("/tmp/%s-demikernel.yaml", container_config.ID)
-	// Create yaml configuration if the loc
-	if _, err := os.Stat(config_host_location); os.IsNotExist(err) {
-		// Create the file
-		f, err := os.Create(config_host_location)
-		if err != nil {
+	// Delete the file if it exists
+	if _, err := os.Stat(config_host_location); err == nil {
+		if err := os.Remove(config_host_location); err != nil {
 			return err
 		}
-		defer f.Close()
-
-		// Write the yaml configuration
-		// Get the IP from the annotations or use a default IP
-		var ip string
-		if val, ok := container_config.Annotations["demikernel_ip"]; ok {
-			ip = val
-		} else {
-			ip = defaultDemikernelIP
-		}
-
-		// The structure of the configuration yaml is "catnip" -> "my_ipv4_addr" -> ip
-		f.Write([]byte("catnip:\n"))
-		f.Write([]byte("  my_ipv4_addr: " + ip + "\n"))
 	}
+
+	// Create the yaml configuration
+	f, err := os.Create(config_host_location)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Write the yaml configuration
+	// Get the IP from the annotations or use a default IP
+	var ip string
+	if val, ok := container_config.Annotations["demikernel_ip"]; ok {
+		ip = val
+	} else {
+		ip = defaultDemikernelIP
+	}
+
+	// The structure of the configuration yaml is "catnip" -> "my_ipv4_addr" -> ip
+	f.Write([]byte("catnip:\n"))
+	f.Write([]byte("  my_ipv4_addr: " + ip + "\n"))
 
 	if err := mountFile(container_config, config_host_location, defaultNimbleConfigPath); err != nil {
 		return err
