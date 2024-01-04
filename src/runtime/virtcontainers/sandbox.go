@@ -1532,7 +1532,7 @@ func addNimbleComponents(container_config *ContainerConfig) error {
 	// Write the yaml configuration
 	// Get the IP from the annotations or use a default IP
 	var ip string
-	if val, ok := container_config.Annotations["demikernel_ip"]; ok {
+	if val, ok := container_config.Annotations["io.katacontainers.demikernel_ip"]; ok {
 		ip = val
 	} else {
 		ip = defaultDemikernelIP
